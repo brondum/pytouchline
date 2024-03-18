@@ -1,10 +1,10 @@
 #!/usr/bin/python3
 
-from pytouchline import PyTouchline
+from pytouchline_extended import PyTouchline
 
-py_touchline = PyTouchline()
+py_touchline = PyTouchline(ip_address="http://192.168.1.254")
 
-numberOfDevices = int(py_touchline.get_number_of_devices("http://192.168.1.10"))
+numberOfDevices = py_touchline.get_number_of_devices()
 devices = []
 
 for x in range(0, numberOfDevices):

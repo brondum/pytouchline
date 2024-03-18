@@ -1,14 +1,13 @@
-from distutils.core import setup
+from setuptools import setup
 setup(
-  name = 'pytouchline',
+  name = 'pytouchline_extended',
   packages = ['pytouchline'],
-  version = '0.7',
+  version = '0.3',
   description = 'A Roth Touchline interface library',
-  author = 'Aksel Bondoe',
-  author_email = 'aksel.bondoe@gmail.com',
+  author = 'Peter Brondum',
   license='MIT',
-  url = 'https://github.com/abondoe/pytouchline',
-  download_url = 'https://github.com/abondoe/pytouchline/archive/0.7.tar.gz',
+  url = 'https://github.com/brondum/pytouchline',
+  download_url = 'https://github.com/brondum/pytouchline/archive/0.3.tar.gz',
   keywords = ['Roth', 'Touchline', 'Home Assistant', 'hassio', "Heat pump"],
   classifiers = [
 	'Development Status :: 3 - Alpha',
@@ -16,5 +15,5 @@ setup(
 	'License :: OSI Approved :: MIT License',
 	'Programming Language :: Python :: 3',
   ],
-  install_requires=['httplib2', 'cchardet']
+  install_requires=['httplib2', 'faust-cchardet']
 )

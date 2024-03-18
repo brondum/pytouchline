@@ -2,14 +2,13 @@ import httplib2
 import cchardet as chardet
 import xml.etree.ElementTree as ET
 
-__author__ = 'abondoe'
+__author__ = 'brondum'
 
 
 class PyTouchline(object):
-	_ip_address = ""
-
-	def __init__(self, id=0):
+	def __init__(self, id=0, ip_address=""):
 		self._id = id
+		self._ip_address = ip_address
 		self._temp_scale = 100
 		self._header = {"Content-Type": "text/xml"}
 		self._read_path = "/cgi-bin/ILRReadValues.cgi"
@@ -40,11 +39,17 @@ class PyTouchline(object):
 			Parameter(name="ownerKurzID", desc="Controller ID",
 					  type=Parameter.G))
 
-	def get_number_of_devices(self, ip_address):
-		PyTouchline._ip_address = ip_address
+	def get_number_of_devices(self):
 		number_of_devices_items = []
 		number_of_devices_items.append("<i><n>totalNumberOfDevices</n></i>")
 		request = self._get_touchline_request(number_of_devices_items)
+		response = self._request_and_receive_xml(request)
+		return self._parse_number_of_devices(response)
+	
+	def get_hostname(self):
+		hostname_items = []
+		hostname_items.append("<i><n>hw.HostName</n></i>")
+		request = self._get_touchline_request(hostname_items)
 		response = self._request_and_receive_xml(request)
 		return self._parse_number_of_devices(response)
 
@@ -97,7 +102,7 @@ class PyTouchline(object):
 		try:
 			h = httplib2.Http()
 			(resp, content) = h.request(
-				uri=PyTouchline._ip_address +
+				uri=self._ip_address +
 					self._write_path + "?" +
 					"G" + str(self._parameter["Unique ID"]) +
 					"." + str(parameter) + "=" + str(value),
@@ -115,7 +120,7 @@ class PyTouchline(object):
 		try:
 			h = httplib2.Http()
 			(resp, content) = h.request(
-				uri=PyTouchline._ip_address + self._read_path,
+				uri=self._ip_address + self._read_path,
 				method="POST",
 				body=req_key,
 				headers=self._header
