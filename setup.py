@@ -1,13 +1,13 @@
 from setuptools import setup
 setup(
   name = 'pytouchline_extended',
-  packages = ['pytouchline'],
-  version = '0.3',
+  packages = ['pytouchline_extended'],
+  version = '0.4',
   description = 'A Roth Touchline interface library',
   author = 'Peter Brondum',
   license='MIT',
   url = 'https://github.com/brondum/pytouchline',
-  download_url = 'https://github.com/brondum/pytouchline/archive/0.3.tar.gz',
+  download_url = 'https://github.com/brondum/pytouchline/archive/0.4.tar.gz',
   keywords = ['Roth', 'Touchline', 'Home Assistant', 'hassio', "Heat pump"],
   classifiers = [
 	'Development Status :: 3 - Alpha',
