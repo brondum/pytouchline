@@ -6,9 +6,17 @@ __author__ = 'brondum'
 
 
 class PyTouchline(object):
-	def __init__(self, id=0, ip_address=""):
+	"""
+	A Python interface for controlling a Roth Touchline heat pump controller.
+
+	Attributes:
+			id (int): The ID of the sensor.
+			url (str): The URL of the heat pump controller.
+	"""
+
+	def __init__(self, id=0, url=""):
 		self._id = id
-		self._ip_address = ip_address
+		self._url = url
 		self._temp_scale = 100
 		self._header = {"Content-Type": "text/xml"}
 		self._read_path = "/cgi-bin/ILRReadValues.cgi"
@@ -60,6 +68,7 @@ class PyTouchline(object):
 		response = self._request_and_receive_xml(request)
 		return self._parse_number_of_devices(response)
 
+	# update the roth touchline device, and parse desc, id etc.
 	def update(self):
 		device_items = self._get_touchline_device_item(self._id)
 		request = self._get_touchline_request(device_items)
@@ -102,7 +111,7 @@ class PyTouchline(object):
 		try:
 			h = httplib2.Http()
 			(resp, content) = h.request(
-				uri=self._ip_address +
+				uri=self._url +
 					self._write_path + "?" +
 					"G" + str(self._parameter["Unique ID"]) +
 					"." + str(parameter) + "=" + str(value),
@@ -120,7 +129,7 @@ class PyTouchline(object):
 		try:
 			h = httplib2.Http()
 			(resp, content) = h.request(
-				uri=self._ip_address + self._read_path,
+				uri=self._url + self._read_path,
 				method="POST",
 				body=req_key,
 				headers=self._header
