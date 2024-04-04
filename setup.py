@@ -2,7 +2,7 @@ from setuptools import setup
 setup(
   name = 'pytouchline_extended',
   packages = ['pytouchline_extended'],
-  version = $GITHUB_REF_NAME,
+  version = "$GITHUB_REF_NAME",
   description = 'A Roth Touchline interface library',
   long_description="A simple helper library for controlling a Roth Touchline heat pump controller",
   author = 'Peter Brondum',
