@@ -32,10 +32,15 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install build
-    - name: Set version
+    - name: install envsubts
       run: |
-        VERSION=${GITHUB_REF#refs/tags/}
-        sed -i "s/version='0.0.0',/version='$VERSION',/" setup.py
+        if [ "$(id -u)" = 0 ]; then export SUDO=""; else # Check if we're root
+          export SUDO="sudo";
+        fi
+        command -v gettext >/dev/null 2>&1 || { $SUDO apt -qq update && $SUDO apt -qq install -y gettext; }
+    - name: substitute env vars
+      run: |
+        envsubst < setup.py > setup.py-tmp && mv setup.py-tmp setup.py
     - name: Build package
       run: python -m build
     - name: Publish package
