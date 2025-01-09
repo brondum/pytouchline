@@ -1,4 +1,4 @@
 faust_cchardet==2.1.19
 httplib2==0.22.0
 pytest==8.3.4
-setuptools==75.1.0
+setuptools==75.7.0
