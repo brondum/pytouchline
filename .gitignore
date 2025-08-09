@@ -102,3 +102,7 @@ ENV/
 
 #pycharm
 .idea
+
+# UV project
+pyproject.toml
+uv.lock
