@@ -17,12 +17,15 @@ Here's a basic example of how to use `pytouchline_extended`:
 ```python
 from pytouchline_extended import PyTouchline
 
-py_touchline = PyTouchline(url="http://192.168.1.254")
+URL = "http://192.168.1.254"
+
+py_touchline = PyTouchline(url=URL)
 
 numberOfDevices = py_touchline.get_number_of_devices()
+devices: list[PyTouchline] = []
 # for each device, get information
 for x in range(0, numberOfDevices):
-	devices.append(PyTouchline(id=x, url="http://192.168.1.254"))
+	devices.append(PyTouchline(id=x, url=URL))
 	devices[x].update()
 	print(x)
 	print(devices[x].get_name())
