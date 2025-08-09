@@ -52,7 +52,10 @@ class PyTouchline(object):
 		number_of_devices_items.append("<i><n>totalNumberOfDevices</n></i>")
 		request = self._get_touchline_request(number_of_devices_items)
 		response = self._request_and_receive_xml(request)
-		return self._parse_number_of_devices(response)
+		number_of_devcies = self._parse_number_of_devices(response)
+		if number_of_devcies is None:
+			raise Exception("Could not fetch the number of devices")
+		return int(number_of_devcies)
 	
 	def get_hostname(self):
 		hostname_items = []
