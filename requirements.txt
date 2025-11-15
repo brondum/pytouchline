@@ -1,4 +1,5 @@
+asyncio==4.0.0
 faust_cchardet==2.1.19
-httplib2==0.22.0
+httpx==0.28.1
 pytest==8.4.1
 setuptools==80.9.0

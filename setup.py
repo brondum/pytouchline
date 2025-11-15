@@ -15,5 +15,5 @@ setup(
 	'License :: OSI Approved :: MIT License',
 	'Programming Language :: Python :: 3',
   ],
-  install_requires=['httplib2', 'faust-cchardet']
+  install_requires=['httpx', 'faust-cchardet']
 )

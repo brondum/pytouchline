@@ -1,6 +1,7 @@
-import httplib2
+import httpx
 import cchardet as chardet
 import xml.etree.ElementTree as ET
+import asyncio
 
 __author__ = 'brondum'
 
@@ -21,8 +22,8 @@ class PyTouchline(object):
 		self._header = {"Content-Type": "text/xml"}
 		self._read_path = "/cgi-bin/ILRReadValues.cgi"
 		self._write_path = "/cgi-bin/writeVal.cgi"
-		self._parameter = {}
-		self._xml_element_list = []
+		self._parameter: dict[str, str] = {}
+		self._xml_element_list: list[Parameter] = []
 		self._xml_element_list.append(
 			Parameter(name="name", desc="Name", type=Parameter.G))
 		self._xml_element_list.append(
@@ -47,33 +48,49 @@ class PyTouchline(object):
 			Parameter(name="ownerKurzID", desc="Controller ID",
 					  type=Parameter.G))
 
-	def get_number_of_devices(self):
+	async def get_number_of_devices_async(self):
 		number_of_devices_items = []
 		number_of_devices_items.append("<i><n>totalNumberOfDevices</n></i>")
 		request = self._get_touchline_request(number_of_devices_items)
-		response = self._request_and_receive_xml(request)
-		return self._parse_number_of_devices(response)
+		response = await self._request_and_receive_xml(request)
+		number_of_devcies = self._parse_number_of_devices(response)
+		if number_of_devcies is None:
+			raise Exception("Could not fetch the number of devices")
+		return int(number_of_devcies)
+
+	def get_number_of_devices(self):
+		return asyncio.run(self.get_number_of_devices_async())
 	
-	def get_hostname(self):
+	async def get_hostname_async(self):
 		hostname_items = []
 		hostname_items.append("<i><n>hw.HostName</n></i>")
 		request = self._get_touchline_request(hostname_items)
-		response = self._request_and_receive_xml(request)
+		response = await self._request_and_receive_xml(request)
 		return self._parse_number_of_devices(response)
 
-	def get_status(self):
+	def get_hostname(self):
+		return asyncio.run(self.get_hostname_async())
+
+	async def get_status_async(self):
 		status_items = []
 		status_items.append("<i><n>R0.SystemStatus</n></i>")
 		request = self._get_touchline_request(status_items)
-		response = self._request_and_receive_xml(request)
+		response = await self._request_and_receive_xml(request)
 		return self._parse_number_of_devices(response)
+
+	def get_status(self):
+		return asyncio.run(self.get_status_async())
+
+	# update the roth touchline device, and parse desc, id etc.
+	async def update_async(self):
+		device_items = self._get_touchline_device_item(self._id)
+		request = self._get_touchline_request(device_items)
+		response = await self._request_and_receive_xml(request)
+		return self._parse_device(response)
 
 	# update the roth touchline device, and parse desc, id etc.
 	def update(self):
-		device_items = self._get_touchline_device_item(self._id)
-		request = self._get_touchline_request(device_items)
-		response = self._request_and_receive_xml(request)
-		return self._parse_device(response)
+		return asyncio.run(self.update_async())
 
 	def _parse_device(self, response):
 		self.devices = []
@@ -107,41 +124,41 @@ class PyTouchline(object):
 		request += "</body>"
 		return request
 
-	def write_parameter(self, parameter, value):
-		try:
-			h = httplib2.Http()
-			(resp, content) = h.request(
-				uri=self._url +
+	async def write_parameter_async(self, parameter, value):
+		async with httpx.AsyncClient() as client:
+			response = await client.request(
+				url=self._url +
 					self._write_path + "?" +
 					"G" + str(self._parameter["Unique ID"]) +
 					"." + str(parameter) + "=" + str(value),
-				method="GET"
+				method="GET",
 			)
-		except httplib2.ServerNotFoundError:
-			print("PyTouchline not found")
 
-		if resp.reason != "OK":
-			exit("Network error")
-		else:
-			return content
+		if not response.is_success:
+			print(response.text)
+			raise Exception("Failed to write paramter: Roth Touchline did not respond succesfully")
 
-	def _request_and_receive_xml(self, req_key):
-		try:
-			h = httplib2.Http()
-			(resp, content) = h.request(
-				uri=self._url + self._read_path,
+		return response.content
+
+	def write_parameter(self, parameter, value):
+		return asyncio.run(self.write_parameter_async(parameter, value))
+
+	async def _request_and_receive_xml(self, req_key):
+		async with httpx.AsyncClient() as client:
+			response = await client.request(
+				url=self._url + self._read_path,
 				method="POST",
-				body=req_key,
+				data=req_key,
 				headers=self._header
 			)
-		except httplib2.ServerNotFoundError:
-			print("PyTouchline not found")
 
-		if resp.reason != "OK":
-			exit("Network error")
-		else:
-			enc = chardet.detect(content)['encoding']
-			return ET.XML(content, parser=ET.XMLParser(encoding=enc))
+		if not response.is_success:
+			print(response.text)
+			raise Exception("Roth Touchline did not respond succesfully")
+
+		content = response.content
+		enc = chardet.detect(content)['encoding']
+		return ET.XML(content, parser=ET.XMLParser(encoding=enc))
 
 	def _parse_number_of_devices(self, response):
 		item_list = response.find('item_list')
@@ -165,9 +182,12 @@ class PyTouchline(object):
 		else:
 			return None
 
-	def set_name(self, value):
-		return self.write_parameter("name",
-									value).decode("utf-8") == str(value)
+	async def set_name_async(self, value: str):
+		return (await self.write_parameter_async("name",
+									value)).decode("utf-8") == str(value)
+	
+	def set_name(self, value: str):
+		return asyncio.run(self.set_name_async(value))
 
 	def get_current_temperature(self):
 		if "Temperature" in self._parameter:
@@ -181,11 +201,14 @@ class PyTouchline(object):
 		else:
 			return None
 
-	def set_target_temperature(self, value):
-		return self.write_parameter("SollTemp",
+	async def set_target_temperature_async(self, value: float):
+		return (await self.write_parameter_async("SollTemp",
 									float(value) *
-									self._temp_scale).decode("utf-8") == \
+									self._temp_scale)).decode("utf-8") == \
 			   str(float(value) * self._temp_scale)
+
+	def set_target_temperature(self, value: float):
+		return asyncio.run(self.set_target_temperature_async(value))
 
 	def get_target_temperature_high(self):
 		if "Setpoint max" in self._parameter:
@@ -193,11 +216,14 @@ class PyTouchline(object):
 		else:
 			return None
 
-	def set_target_temperature_high(self, value):
-		return self.write_parameter("SollTempMaxVal",
+	async def set_target_temperature_high_async(self, value: float):
+		return (await self.write_parameter_async("SollTempMaxVal",
 									float(value) *
-									self._temp_scale).decode("utf-8") == \
+									self._temp_scale)).decode("utf-8") == \
 			   str(float(value) * self._temp_scale)
+	
+	def set_target_temperature_high(self, value: float):
+		return asyncio.run(self.set_target_temperature_high_async(value))
 
 	def get_target_temperature_low(self):
 		if "Setpoint min" in self._parameter:
@@ -205,11 +231,14 @@ class PyTouchline(object):
 		else:
 			return None
 
-	def set_target_temperature_low(self, value):
-		return self.write_parameter("SollTempMinVal",
+	async def set_target_temperature_low_async(self, value: float):
+		return (await self.write_parameter_async("SollTempMinVal",
 									float(value) *
-									self._temp_scale).decode("utf-8") == \
+									self._temp_scale)).decode("utf-8") == \
 			   str(float(value) * self._temp_scale)
+
+	def set_target_temperature_low(self, value: float):
+		return asyncio.run(self.set_target_temperature_low_async(value))
 
 	def get_week_program(self):
 		if "Week program" in self._parameter:
@@ -217,9 +246,12 @@ class PyTouchline(object):
 		else:
 			return None
 
-	def set_week_program(self, value):
-		return self.write_parameter("WeekProg",
-									value).decode("utf-8") == str(value)
+	async def set_week_program_async(self, value: int):
+		return (await self.write_parameter_async("WeekProg",
+									value)).decode("utf-8") == str(value)
+
+	def set_week_program(self, value: int):
+		return asyncio.run(self.set_week_program_async(value))
 
 	def get_operation_mode(self):
 		if "Operation mode" in self._parameter:
@@ -227,9 +259,12 @@ class PyTouchline(object):
 		else:
 			return None
 
-	def set_operation_mode(self, value):
-		return self.write_parameter("OPMode",
-									value).decode("utf-8") == str(value)
+	async def set_operation_mode_async(self, value: int):
+		return (await self.write_parameter_async("OPMode",
+									value)).decode("utf-8") == str(value)
+	
+	def set_operation_mode(self, value: int):
+		return asyncio.run(self.set_operation_mode_async(value))
 
 	def get_device_id(self):
 		if "Device ID" in self._parameter:
@@ -248,7 +283,7 @@ class Parameter(object):
 	G = 1
 	R = 2
 
-	def __init__(self, name, desc, type):
+	def __init__(self, name: str, desc: str, type: int):
 		self._name = name
 		self._desc = desc
 		self._type = type
