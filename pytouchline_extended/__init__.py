@@ -2,8 +2,11 @@ import httpx
 import cchardet as chardet
 import xml.etree.ElementTree as ET
 import asyncio
+import logging
 
 __author__ = 'brondum'
+
+logger = logging.getLogger(__name__)
 
 
 class PyTouchline(object):
@@ -125,7 +128,7 @@ class PyTouchline(object):
 		return request
 
 	async def write_parameter_async(self, parameter, value):
-		async with httpx.AsyncClient() as client:
+		async with httpx.AsyncClient(timeout=10.0) as client:
 			response = await client.request(
 				url=self._url +
 					self._write_path + "?" +
@@ -135,8 +138,9 @@ class PyTouchline(object):
 			)
 
 		if not response.is_success:
-			print(response.text)
-			raise Exception("Failed to write paramter: Roth Touchline did not respond succesfully")
+			logger.error("Failed to write parameter %s: HTTP %s - %s",
+						 parameter, response.status_code, response.text)
+			raise Exception("Failed to write parameter: Roth Touchline did not respond successfully")
 
 		return response.content
 
@@ -144,7 +148,7 @@ class PyTouchline(object):
 		return asyncio.run(self.write_parameter_async(parameter, value))
 
 	async def _request_and_receive_xml(self, req_key):
-		async with httpx.AsyncClient() as client:
+		async with httpx.AsyncClient(timeout=10.0) as client:
 			response = await client.request(
 				url=self._url + self._read_path,
 				method="POST",
@@ -153,8 +157,9 @@ class PyTouchline(object):
 			)
 
 		if not response.is_success:
-			print(response.text)
-			raise Exception("Roth Touchline did not respond succesfully")
+			logger.error("Failed to read from Touchline: HTTP %s - %s",
+						 response.status_code, response.text)
+			raise Exception("Roth Touchline did not respond successfully")
 
 		content = response.content
 		enc = chardet.detect(content)['encoding']
