@@ -81,12 +81,12 @@ async def main():
 	if len(devices) > 0:
 		print(f"Hostname: {await devices[0].get_hostname_async()}")
 
-		print(devices[0].set_name("Hovedsoverom"))
-		print(devices[0].set_target_temperature(22.5))
-		print(devices[0].set_target_temperature_high(30))
-		print(devices[0].set_target_temperature_low(5))
-		print(devices[0].set_week_program(0))
-		print(devices[0].set_operation_mode(0))
+		print(await devices[0].set_name_async("Hovedsoverom"))
+		print(await devices[0].set_target_temperature_async(22.5))
+		print(await devices[0].set_target_temperature_high_async(30))
+		print(await devices[0].set_target_temperature_low_async(5))
+		print(await devices[0].set_week_program_async(0))
+		print(await devices[0].set_operation_mode_async(0))
 
 if __name__ == "__main__":
 	asyncio.run(main())
