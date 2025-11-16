@@ -51,7 +51,7 @@ class PyTouchline(object):
 			Parameter(name="ownerKurzID", desc="Controller ID",
 					  type=Parameter.G))
 
-	async def get_number_of_devices_async(self):
+	async def get_number_of_devices_async(self) -> int:
 		number_of_devices_items = []
 		number_of_devices_items.append("<i><n>totalNumberOfDevices</n></i>")
 		request = self._get_touchline_request(number_of_devices_items)
@@ -61,38 +61,38 @@ class PyTouchline(object):
 			raise Exception("Could not fetch the number of devices")
 		return int(number_of_devcies)
 
-	def get_number_of_devices(self):
+	def get_number_of_devices(self) -> int:
 		return asyncio.run(self.get_number_of_devices_async())
 	
-	async def get_hostname_async(self):
+	async def get_hostname_async(self) -> str | None:
 		hostname_items = []
 		hostname_items.append("<i><n>hw.HostName</n></i>")
 		request = self._get_touchline_request(hostname_items)
 		response = await self._request_and_receive_xml(request)
 		return self._parse_number_of_devices(response)
 
-	def get_hostname(self):
+	def get_hostname(self) -> str | None:
 		return asyncio.run(self.get_hostname_async())
 
-	async def get_status_async(self):
+	async def get_status_async(self) -> str | None:
 		status_items = []
 		status_items.append("<i><n>R0.SystemStatus</n></i>")
 		request = self._get_touchline_request(status_items)
 		response = await self._request_and_receive_xml(request)
 		return self._parse_number_of_devices(response)
 
-	def get_status(self):
+	def get_status(self) -> str | None:
 		return asyncio.run(self.get_status_async())
 
 	# update the roth touchline device, and parse desc, id etc.
-	async def update_async(self):
+	async def update_async(self) -> None:
 		device_items = self._get_touchline_device_item(self._id)
 		request = self._get_touchline_request(device_items)
 		response = await self._request_and_receive_xml(request)
 		return self._parse_device(response)
 
 	# update the roth touchline device, and parse desc, id etc.
-	def update(self):
+	def update(self) -> None:
 		return asyncio.run(self.update_async())
 
 	def _parse_device(self, response):
@@ -181,103 +181,103 @@ class PyTouchline(object):
 		items.append("<i>" + parameters + "</i>")
 		return items
 
-	def get_name(self):
+	def get_name(self) -> str | None:
 		if "Name" in self._parameter:
 			return self._parameter["Name"]
 		else:
 			return None
 
-	async def set_name_async(self, value: str):
+	async def set_name_async(self, value: str) -> bool:
 		return (await self.write_parameter_async("name",
 									value)).decode("utf-8") == str(value)
-	
-	def set_name(self, value: str):
+
+	def set_name(self, value: str) -> bool:
 		return asyncio.run(self.set_name_async(value))
 
-	def get_current_temperature(self):
+	def get_current_temperature(self) -> float | None:
 		if "Temperature" in self._parameter:
 			return int(self._parameter["Temperature"]) / self._temp_scale
 		else:
 			return None
 
-	def get_target_temperature(self):
+	def get_target_temperature(self) -> float | None:
 		if "Setpoint" in self._parameter:
 			return int(self._parameter["Setpoint"]) / self._temp_scale
 		else:
 			return None
 
-	async def set_target_temperature_async(self, value: float):
+	async def set_target_temperature_async(self, value: float) -> bool:
 		return (await self.write_parameter_async("SollTemp",
 									float(value) *
 									self._temp_scale)).decode("utf-8") == \
 			   str(float(value) * self._temp_scale)
 
-	def set_target_temperature(self, value: float):
+	def set_target_temperature(self, value: float) -> bool:
 		return asyncio.run(self.set_target_temperature_async(value))
 
-	def get_target_temperature_high(self):
+	def get_target_temperature_high(self) -> float | None:
 		if "Setpoint max" in self._parameter:
 			return int(self._parameter["Setpoint max"]) / self._temp_scale
 		else:
 			return None
 
-	async def set_target_temperature_high_async(self, value: float):
+	async def set_target_temperature_high_async(self, value: float) -> bool:
 		return (await self.write_parameter_async("SollTempMaxVal",
 									float(value) *
 									self._temp_scale)).decode("utf-8") == \
 			   str(float(value) * self._temp_scale)
-	
-	def set_target_temperature_high(self, value: float):
+
+	def set_target_temperature_high(self, value: float) -> bool:
 		return asyncio.run(self.set_target_temperature_high_async(value))
 
-	def get_target_temperature_low(self):
+	def get_target_temperature_low(self) -> float | None:
 		if "Setpoint min" in self._parameter:
 			return int(self._parameter["Setpoint min"]) / self._temp_scale
 		else:
 			return None
 
-	async def set_target_temperature_low_async(self, value: float):
+	async def set_target_temperature_low_async(self, value: float) -> bool:
 		return (await self.write_parameter_async("SollTempMinVal",
 									float(value) *
 									self._temp_scale)).decode("utf-8") == \
 			   str(float(value) * self._temp_scale)
 
-	def set_target_temperature_low(self, value: float):
+	def set_target_temperature_low(self, value: float) -> bool:
 		return asyncio.run(self.set_target_temperature_low_async(value))
 
-	def get_week_program(self):
+	def get_week_program(self) -> int | None:
 		if "Week program" in self._parameter:
 			return int(self._parameter["Week program"])
 		else:
 			return None
 
-	async def set_week_program_async(self, value: int):
+	async def set_week_program_async(self, value: int) -> bool:
 		return (await self.write_parameter_async("WeekProg",
 									value)).decode("utf-8") == str(value)
 
-	def set_week_program(self, value: int):
+	def set_week_program(self, value: int) -> bool:
 		return asyncio.run(self.set_week_program_async(value))
 
-	def get_operation_mode(self):
+	def get_operation_mode(self) -> int | None:
 		if "Operation mode" in self._parameter:
 			return int(self._parameter["Operation mode"])
 		else:
 			return None
 
-	async def set_operation_mode_async(self, value: int):
+	async def set_operation_mode_async(self, value: int) -> bool:
 		return (await self.write_parameter_async("OPMode",
 									value)).decode("utf-8") == str(value)
-	
-	def set_operation_mode(self, value: int):
+
+	def set_operation_mode(self, value: int) -> bool:
 		return asyncio.run(self.set_operation_mode_async(value))
 
-	def get_device_id(self):
+	def get_device_id(self) -> int | None:
 		if "Device ID" in self._parameter:
 			return int(self._parameter["Device ID"])
 		else:
 			return None
 
-	def get_controller_id(self):
+	def get_controller_id(self) -> int | None:
 		if "Controller ID" in self._parameter:
 			return int(self._parameter["Controller ID"])
 		else:
@@ -293,11 +293,11 @@ class Parameter(object):
 		self._desc = desc
 		self._type = type
 
-	def get_name(self):
+	def get_name(self) -> str:
 		return self._name
 
-	def get_desc(self):
+	def get_desc(self) -> str:
 		return self._desc
 
-	def get_type(self):
+	def get_type(self) -> int:
 		return self._type
