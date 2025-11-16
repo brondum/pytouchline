@@ -1,6 +1,6 @@
 import pytest
 from pytouchline_extended import PyTouchline, Parameter
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 import xml.etree.ElementTree as ET
 
 
