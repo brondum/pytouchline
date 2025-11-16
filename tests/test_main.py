@@ -73,12 +73,24 @@ def test_parse_device():
                 <i>
                     <n>G0.name</n>
                     <v>Living Room</v>
-                    <n>G0.RaumTemp</n>
-                    <v>2150</v>
+                    <n>CD.upass</n>
+                    <v>password</v>
+                    <n>G0.SollTempMaxVal</n>
+                    <v>3000</v>
+                    <n>G0.SollTempMinVal</n>
+                    <v>500</v>
+                    <n>G0.WeekProg</n>
+                    <v>0</v>
+                    <n>G0.OPMode</n>
+                    <v>1</v>
                     <n>G0.SollTemp</n>
                     <v>2200</v>
+                    <n>G0.RaumTemp</n>
+                    <v>2150</v>
                     <n>G0.kurzID</n>
                     <v>1</v>
+                    <n>G0.ownerKurzID</n>
+                    <v>100</v>
                 </i>
             </item_list>
         </body>
@@ -88,6 +100,8 @@ def test_parse_device():
     assert touchline._parameter["Name"] == "Living Room"
     assert touchline._parameter["Temperature"] == "2150"
     assert touchline._parameter["Setpoint"] == "2200"
+    assert touchline._parameter["Device ID"] == "1"
+    assert touchline._parameter["Controller ID"] == "100"
 
 
 def test_get_name():
