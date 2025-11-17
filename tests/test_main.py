@@ -306,3 +306,35 @@ async def test_update_async():
         assert touchline.get_name() == "Bedroom"
         assert touchline.get_current_temperature() == 20.5
         assert touchline.get_target_temperature() == 21.0
+
+
+@pytest.mark.asyncio
+async def test_request_and_receive_xml_empty_response():
+    """Test that empty responses are handled gracefully"""
+    touchline = PyTouchline(id=0, url="http://192.168.1.254")
+
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.content = b""  # Empty response
+
+    with patch('httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=mock_response)
+
+        with pytest.raises(Exception, match="Touchline controller returned empty response"):
+            await touchline._request_and_receive_xml("<test/>")
+
+
+@pytest.mark.asyncio
+async def test_request_and_receive_xml_invalid_xml():
+    """Test that invalid XML responses are handled gracefully"""
+    touchline = PyTouchline(id=0, url="http://192.168.1.254")
+
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.content = b"This is not XML"
+
+    with patch('httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=mock_response)
+
+        with pytest.raises(Exception, match="Invalid XML response from Touchline controller"):
+            await touchline._request_and_receive_xml("<test/>")
