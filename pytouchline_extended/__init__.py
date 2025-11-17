@@ -163,10 +163,10 @@ class PyTouchline(object):
 		except httpx.TimeoutException as e:
 			logger.error("Timeout (%.1fs) while connecting to Touchline controller at %s: %s",
 						 self._timeout, self._url, str(e))
-			raise Exception(f"Touchline controller timeout after {self._timeout} seconds: {e}")
+			raise Exception(f"Touchline controller timeout after {self._timeout} seconds: {e}") from e
 		except httpx.RequestError as e:
 			logger.error("Network error while connecting to Touchline controller at %s: %s", self._url, str(e))
-			raise Exception(f"Network error connecting to Touchline controller: {e}")
+			raise Exception(f"Network error connecting to Touchline controller: {e}") from e
 
 		logger.debug("Response status: %s, content length: %d bytes",
 					 response.status_code, len(response.content) if response.content else 0)

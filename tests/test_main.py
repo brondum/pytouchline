@@ -345,3 +345,33 @@ async def test_request_and_receive_xml_invalid_xml():
 
         with pytest.raises(Exception, match="Invalid XML response from Touchline controller"):
             await touchline._request_and_receive_xml("<test/>")
+
+
+@pytest.mark.asyncio
+async def test_request_and_receive_xml_timeout():
+    """Test that timeout exceptions are handled gracefully"""
+    import httpx
+    touchline = PyTouchline(id=0, url="http://192.168.1.254", timeout=5.0)
+
+    with patch('httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.request = AsyncMock(
+            side_effect=httpx.TimeoutException("Connection timeout")
+        )
+
+        with pytest.raises(Exception, match="Touchline controller timeout after 5.0 seconds"):
+            await touchline._request_and_receive_xml("<test/>")
+
+
+@pytest.mark.asyncio
+async def test_request_and_receive_xml_network_error():
+    """Test that network errors are handled gracefully"""
+    import httpx
+    touchline = PyTouchline(id=0, url="http://192.168.1.254")
+
+    with patch('httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.request = AsyncMock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+
+        with pytest.raises(Exception, match="Network error connecting to Touchline controller"):
+            await touchline._request_and_receive_xml("<test/>")
