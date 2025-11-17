@@ -16,11 +16,13 @@ class PyTouchline(object):
 	Attributes:
 			id (int): The ID of the sensor.
 			url (str): The URL of the heat pump controller.
+			timeout (float): HTTP request timeout in seconds (default: 10.0).
 	"""
 
-	def __init__(self, id=0, url=""):
+	def __init__(self, id=0, url="", timeout=10.0):
 		self._id = id
 		self._url = url
+		self._timeout = timeout
 		self._temp_scale = 100
 		self._header = {"Content-Type": "text/xml"}
 		self._read_path = "/cgi-bin/ILRReadValues.cgi"
@@ -148,13 +150,26 @@ class PyTouchline(object):
 		return asyncio.run(self.write_parameter_async(parameter, value))
 
 	async def _request_and_receive_xml(self, req_key):
-		async with httpx.AsyncClient(timeout=10.0) as client:
-			response = await client.request(
-				url=self._url + self._read_path,
-				method="POST",
-				data=req_key,
-				headers=self._header
-			)
+		logger.debug("Requesting URL: %s%s (timeout: %.1fs)", self._url, self._read_path, self._timeout)
+
+		try:
+			async with httpx.AsyncClient(timeout=self._timeout) as client:
+				response = await client.request(
+					url=self._url + self._read_path,
+					method="POST",
+					data=req_key,
+					headers=self._header
+				)
+		except httpx.TimeoutException as e:
+			logger.error("Timeout (%.1fs) while connecting to Touchline controller at %s: %s",
+						 self._timeout, self._url, str(e))
+			raise Exception(f"Touchline controller timeout after {self._timeout} seconds: {e}")
+		except httpx.RequestError as e:
+			logger.error("Network error while connecting to Touchline controller at %s: %s", self._url, str(e))
+			raise Exception(f"Network error connecting to Touchline controller: {e}")
+
+		logger.debug("Response status: %s, content length: %d bytes",
+					 response.status_code, len(response.content) if response.content else 0)
 
 		if not response.is_success:
 			logger.error("Failed to read from Touchline: HTTP %s - %s",
@@ -163,7 +178,7 @@ class PyTouchline(object):
 
 		content = response.content
 		if not content or len(content) == 0:
-			logger.error("Received empty response from Touchline controller")
+			logger.error("Received empty response from Touchline controller at %s", self._url)
 			raise Exception("Touchline controller returned empty response")
 
 		try:
