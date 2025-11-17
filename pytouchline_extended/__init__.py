@@ -162,8 +162,17 @@ class PyTouchline(object):
 			raise Exception("Roth Touchline did not respond successfully")
 
 		content = response.content
-		enc = chardet.detect(content)['encoding']
-		return ET.XML(content, parser=ET.XMLParser(encoding=enc))
+		if not content or len(content) == 0:
+			logger.error("Received empty response from Touchline controller")
+			raise Exception("Touchline controller returned empty response")
+
+		try:
+			enc = chardet.detect(content)['encoding']
+			return ET.XML(content, parser=ET.XMLParser(encoding=enc))
+		except ET.ParseError as e:
+			logger.error("Failed to parse XML response from Touchline: %s. Content: %s",
+						 str(e), content[:200])  # Log first 200 bytes
+			raise Exception(f"Invalid XML response from Touchline controller: {e}")
 
 	def _parse_number_of_devices(self, response):
 		item_list = response.find('item_list')
