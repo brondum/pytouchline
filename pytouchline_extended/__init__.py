@@ -1,10 +1,13 @@
-import httpx
-import cchardet as chardet
-import xml.etree.ElementTree as ET
 import asyncio
 import logging
+import xml.etree.ElementTree as ET
+
+import cchardet as chardet
+import httpx
 
 __author__ = 'brondum'
+
+from httpx import AsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,9 @@ class PyTouchline(object):
 			Parameter(name="ownerKurzID", desc="Controller ID",
 					  type=Parameter.G))
 
+	def get_async_client(self) -> AsyncClient:
+		return httpx.AsyncClient(verify=False, timeout=self._timeout)
+
 	async def get_number_of_devices_async(self) -> int:
 		number_of_devices_items = []
 		number_of_devices_items.append("<i><n>totalNumberOfDevices</n></i>")
@@ -65,7 +71,7 @@ class PyTouchline(object):
 
 	def get_number_of_devices(self) -> int:
 		return asyncio.run(self.get_number_of_devices_async())
-	
+
 	async def get_hostname_async(self) -> str | None:
 		hostname_items = []
 		hostname_items.append("<i><n>hw.HostName</n></i>")
@@ -130,7 +136,7 @@ class PyTouchline(object):
 		return request
 
 	async def write_parameter_async(self, parameter, value):
-		async with httpx.AsyncClient(timeout=10.0) as client:
+		async with self.get_async_client() as client:
 			response = await client.request(
 				url=self._url +
 					self._write_path + "?" +
@@ -153,7 +159,7 @@ class PyTouchline(object):
 		logger.debug("Requesting URL: %s%s (timeout: %.1fs)", self._url, self._read_path, self._timeout)
 
 		try:
-			async with httpx.AsyncClient(timeout=self._timeout) as client:
+			async with self.get_async_client() as client:
 				response = await client.request(
 					url=self._url + self._read_path,
 					method="POST",

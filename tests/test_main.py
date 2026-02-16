@@ -1,7 +1,10 @@
-import pytest
-from pytouchline_extended import PyTouchline, Parameter
-from unittest.mock import AsyncMock, patch, MagicMock
 import xml.etree.ElementTree as ET
+from ssl import VerifyMode
+from unittest.mock import AsyncMock, patch, MagicMock
+
+import pytest
+
+from pytouchline_extended import PyTouchline, Parameter
 
 
 def test_init():
@@ -375,3 +378,24 @@ async def test_request_and_receive_xml_network_error():
 
         with pytest.raises(Exception, match="Network error connecting to Touchline controller"):
             await touchline._request_and_receive_xml("<test/>")
+
+
+@pytest.mark.asyncio
+async def test_get_async_client():
+    """Test get_async_client returns a correctly configured httpx.AsyncClient"""
+    import httpx
+    timeout = 15.0
+    touchline = PyTouchline(id=0, url="http://192.168.1.254", timeout=timeout)
+
+    client = touchline.get_async_client()
+
+    assert isinstance(client, httpx.AsyncClient)
+    assert client.timeout.connect == timeout
+    assert client.timeout.read == timeout
+    assert client.timeout.write == timeout
+    assert client.timeout.pool == timeout
+    # verify=False in httpx is handled by the transport
+    assert client._transport._pool._ssl_context.check_hostname is False
+    assert client._transport._pool._ssl_context.verify_mode is VerifyMode.CERT_NONE
+
+    await client.aclose()
