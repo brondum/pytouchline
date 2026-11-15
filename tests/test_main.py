@@ -1,7 +1,9 @@
+import logging
 import xml.etree.ElementTree as ET
 from ssl import VerifyMode
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import httpx
 import pytest
 
 from pytouchline_extended import (
@@ -9,6 +11,7 @@ from pytouchline_extended import (
     PyTouchline,
     TouchlineConnectionError,
     TouchlineError,
+    TouchlineHTTPError,
     TouchlineResponseError,
     TouchlineTimeoutError,
 )
@@ -412,12 +415,14 @@ def test_exception_hierarchy():
     assert issubclass(TouchlineError, Exception)
     assert issubclass(TouchlineConnectionError, TouchlineError)
     assert issubclass(TouchlineTimeoutError, TouchlineConnectionError)
+    assert issubclass(TouchlineHTTPError, TouchlineError)
+    assert not issubclass(TouchlineHTTPError, TouchlineConnectionError)
     assert issubclass(TouchlineResponseError, TouchlineError)
 
 
 @pytest.mark.asyncio
 async def test_request_and_receive_xml_http_error():
-    """Test that non-success HTTP status codes raise TouchlineConnectionError"""
+    """Test that non-success HTTP status codes raise TouchlineHTTPError with the status code"""
     touchline = PyTouchline(id=0, url="http://192.168.1.254")
 
     mock_response = MagicMock()
@@ -428,8 +433,10 @@ async def test_request_and_receive_xml_http_error():
     with patch('httpx.AsyncClient') as mock_client:
         mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=mock_response)
 
-        with pytest.raises(TouchlineConnectionError, match="did not respond successfully"):
+        with pytest.raises(TouchlineHTTPError, match=r"did not respond successfully \(HTTP 500\)") as exc_info:
             await touchline._request_and_receive_xml("<test/>")
+
+    assert exc_info.value.status_code == 500
 
 
 @pytest.mark.asyncio
@@ -463,7 +470,7 @@ async def test_write_parameter_async_network_error():
 
 @pytest.mark.asyncio
 async def test_write_parameter_async_http_error():
-    """Test that non-success HTTP status codes while writing raise TouchlineConnectionError"""
+    """Test that non-success HTTP status codes while writing raise TouchlineHTTPError"""
     touchline = PyTouchline(id=0, url="http://192.168.1.254")
     touchline._parameter["Unique ID"] = "0"
 
@@ -475,8 +482,10 @@ async def test_write_parameter_async_http_error():
     with patch('httpx.AsyncClient') as mock_client:
         mock_client.return_value.__aenter__.return_value.request = AsyncMock(return_value=mock_response)
 
-        with pytest.raises(TouchlineConnectionError, match="Failed to write parameter"):
+        with pytest.raises(TouchlineHTTPError, match=r"Failed to write parameter SollTemp.*\(HTTP 500\)") as exc_info:
             await touchline.write_parameter_async("SollTemp", 2200)
+
+    assert exc_info.value.status_code == 500
 
 
 @pytest.mark.asyncio
@@ -501,3 +510,40 @@ async def test_injected_client_is_used_and_not_closed():
     assert len(requests) == 1
     assert str(requests[0].url) == "http://192.168.1.254/cgi-bin/ILRReadValues.cgi"
     assert requests[0].extensions["timeout"] == {"connect": 7.0, "read": 7.0, "write": 7.0, "pool": 7.0}
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("side_effect", "content", "expected"),
+    [
+        pytest.param(httpx.ConnectError("Connection refused"), None, TouchlineConnectionError, id="network_error"),
+        pytest.param(httpx.TimeoutException("timeout"), None, TouchlineTimeoutError, id="timeout"),
+        pytest.param(None, b"", TouchlineResponseError, id="empty_response"),
+        pytest.param(None, b"<body>CD.upass secret", TouchlineResponseError, id="invalid_xml"),
+    ],
+)
+async def test_errors_are_raised_not_logged(
+    caplog: pytest.LogCaptureFixture,
+    side_effect: Exception | None,
+    content: bytes | None,
+    expected: type[TouchlineError],
+):
+    """Test that the library leaves logging of errors to the caller and never logs response bodies"""
+    caplog.set_level(logging.DEBUG, logger="pytouchline_extended")
+    touchline = PyTouchline(id=0, url="http://192.168.1.254")
+
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.content = content
+
+    with patch('httpx.AsyncClient') as mock_client:
+        mock_client.return_value.__aenter__.return_value.request = AsyncMock(
+            side_effect=side_effect, return_value=mock_response
+        )
+        with pytest.raises(expected) as exc_info:
+            await touchline._request_and_receive_xml("<test/>")
+
+    assert not [record for record in caplog.records if record.levelno > logging.DEBUG]
+    assert "secret" not in caplog.text
+    assert "secret" not in str(exc_info.value)

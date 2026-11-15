@@ -21,11 +21,19 @@ class TouchlineError(Exception):
 
 
 class TouchlineConnectionError(TouchlineError):
-	"""The Touchline controller could not be reached or returned an HTTP error."""
+	"""The Touchline controller could not be reached."""
 
 
 class TouchlineTimeoutError(TouchlineConnectionError):
 	"""The request to the Touchline controller timed out."""
+
+
+class TouchlineHTTPError(TouchlineError):
+	"""The Touchline controller responded with a non-success HTTP status."""
+
+	def __init__(self, message: str, status_code: int):
+		super().__init__(f"{message} (HTTP {status_code})")
+		self.status_code = status_code
 
 
 class TouchlineResponseError(TouchlineError):
@@ -97,12 +105,10 @@ class PyTouchline(object):
 					method=method, url=url, timeout=self._timeout, **kwargs
 				)
 		except httpx.TimeoutException as e:
-			logger.error("Timeout (%.1fs) while connecting to Touchline controller at %s: %s",
-						 self._timeout, self._url, str(e))
-			raise TouchlineTimeoutError(f"Touchline controller timeout after {self._timeout} seconds: {e}") from e
+			raise TouchlineTimeoutError(
+				f"Touchline controller timeout after {self._timeout} seconds at {self._url}: {e}") from e
 		except httpx.RequestError as e:
-			logger.error("Network error while connecting to Touchline controller at %s: %s", self._url, str(e))
-			raise TouchlineConnectionError(f"Network error connecting to Touchline controller: {e}") from e
+			raise TouchlineConnectionError(f"Network error connecting to Touchline controller at {self._url}: {e}") from e
 
 	async def get_number_of_devices_async(self) -> int:
 		number_of_devices_items = []
@@ -199,9 +205,9 @@ class PyTouchline(object):
 		)
 
 		if not response.is_success:
-			logger.error("Failed to write parameter %s: HTTP %s - %s",
-						 parameter, response.status_code, response.text)
-			raise TouchlineConnectionError("Failed to write parameter: Roth Touchline did not respond successfully")
+			raise TouchlineHTTPError(
+				f"Failed to write parameter {parameter}: Roth Touchline did not respond successfully",
+				response.status_code)
 
 		return response.content
 
@@ -222,21 +228,17 @@ class PyTouchline(object):
 					 response.status_code, len(response.content) if response.content else 0)
 
 		if not response.is_success:
-			logger.error("Failed to read from Touchline: HTTP %s - %s",
-						 response.status_code, response.text)
-			raise TouchlineConnectionError("Roth Touchline did not respond successfully")
+			raise TouchlineHTTPError("Roth Touchline did not respond successfully", response.status_code)
 
 		content = response.content
 		if not content or len(content) == 0:
-			logger.error("Received empty response from Touchline controller at %s", self._url)
 			raise TouchlineResponseError("Touchline controller returned empty response")
 
 		try:
 			enc = chardet.detect(content)['encoding']
 			return ET.XML(content, parser=ET.XMLParser(encoding=enc))
 		except ET.ParseError as e:
-			logger.error("Failed to parse XML response from Touchline: %s. Content: %s",
-						 str(e), content[:200])  # Log first 200 bytes
+			# The response is not included as it can contain the controller password
 			raise TouchlineResponseError(f"Invalid XML response from Touchline controller: {e}") from e
 
 	def _parse_number_of_devices(self, response):

@@ -110,9 +110,13 @@ All errors raised by the library derive from `TouchlineError`:
 
 | Exception | Raised when |
 |-----------|-------------|
-| `TouchlineConnectionError` | The controller cannot be reached, or responds with an HTTP error |
+| `TouchlineConnectionError` | The controller cannot be reached |
 | `TouchlineTimeoutError` | A request times out (subclass of `TouchlineConnectionError`) |
+| `TouchlineHTTPError` | The controller responds with a non-success HTTP status (available as `status_code`) |
 | `TouchlineResponseError` | The controller returns an empty, invalid or unexpected response |
+
+The library does not log errors it raises; logging them is left to the caller.
+Previous versions raised plain `Exception`; the new exceptions still derive from it.
 
 ```python
 from pytouchline_extended import PyTouchline, TouchlineConnectionError, TouchlineError
