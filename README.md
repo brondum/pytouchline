@@ -12,7 +12,51 @@ pip install pytouchline_extended
 
 ## Usage
 
-Here's a basic example of how to use `pytouchline_extended`:
+### `TouchlineController` (Recommended Async API)
+
+`TouchlineController` represents a single physical Roth Touchline controller. It serializes all reads and writes behind an internal `asyncio.Lock`, polls paired rooms in sequential `< 1,100`-byte XML chunks (preventing `Keil-EWEB/2.1` multi-segment POST hangs and socket-table exhaustion), and returns immutable `@dataclass` snapshots:
+
+```python
+import asyncio
+import httpx
+
+from pytouchline_extended import (
+    RoomOperationMode,
+    TouchlineController,
+    WeekProgram,
+)
+
+
+async def main() -> None:
+    url = "http://192.168.1.254"
+
+    async with httpx.AsyncClient(verify=False) as client:
+        controller = TouchlineController(url=url, timeout=10.0, client=client)
+        state = await controller.fetch_async()
+
+        for room in state.rooms:
+            print(
+                f"[{room.index}] {room.name} ({room.unique_id}): "
+                f"{room.temperature}°C -> {room.target_temperature}°C "
+                f"(mode={room.operation_mode}, program={room.week_program})"
+            )
+
+        if state.rooms:
+            await controller.set_room_target_temperature_async(0, 22.5)
+            await controller.set_room_min_temperature_async(0, 5.0)
+            await controller.set_room_max_temperature_async(0, 30.0)
+            await controller.set_room_operation_mode_async(0, RoomOperationMode.NORMAL)
+            await controller.set_room_week_program_async(0, WeekProgram.OFF)
+            await controller.set_room_name_async(0, "Hovedsoverom")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Legacy Per-Room API (`PyTouchline`)
+
+`PyTouchline` remains fully supported for backwards compatibility:
 
 ```python
 from pytouchline_extended import PyTouchline
@@ -128,6 +172,12 @@ except TouchlineConnectionError:
 except TouchlineError:
 	print("Unexpected response from controller")
 ```
+
+## Protocol & Hardware Notes
+
+Community-documented details on the classic Roth Touchline CGI/XML protocol, embedded `Keil-EWEB/2.1` HTTP server limits (`< 1,100`-byte POST chunking and single-connection serialization), parameter keys, and hardware limitations are available in [docs/PROTOCOL.md](./docs/PROTOCOL.md).
+
+> **Note:** Those protocol notes were reverse-engineered from a personal controller for interoperability and may differ across hardware revisions, OEM variants, and firmware versions.
 
 ## Contributing
 
