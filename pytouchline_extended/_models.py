@@ -30,6 +30,40 @@ class TemperatureUnit(IntEnum):
     FAHRENHEIT = 1
 
 
+class TouchlineErrorCode(IntEnum):
+    """Active controller-level alarm code reported via ``R0.ErrorCode``."""
+
+    NO_ERROR = 0
+    HIGH_LIMIT_DEW_POINT = 1
+    HIGH_LIMIT_SUPPLY_WATER = 2
+    RF_COMMUNICATION_INTERRUPTED = 3
+
+
+@dataclass(frozen=True)
+class ControllerStatus:
+    """Immutable snapshot of controller identity, network, firmware, and alarms."""
+
+    unique_id: str | None
+    controller_id: int | None
+    paired_devices: int | None
+    total_devices: int
+    is_master: bool | None
+    slave_controllers: int | None
+    hostname: str | None
+    mac_address: str | None
+    ip_address: str | None
+    stm_app_version: str | None
+    stm_bootloader_version: str | None
+    actuator_app_version: str | None
+    actuator_bootloader_version: str | None
+    error_code: TouchlineErrorCode | int | None
+    safety_tripped: bool | None
+    dew_point_active: bool | None
+    week_program_warning: bool | None
+    system_status: int | None
+    timestamp: int | None
+
+
 @dataclass(frozen=True)
 class RoomStatus:
     """Immutable snapshot of a single paired Roth Touchline room thermostat."""
@@ -55,4 +89,5 @@ class RoomStatus:
 class TouchlineState:
     """Immutable point-in-time snapshot of a Roth Touchline controller."""
 
+    controller: ControllerStatus
     rooms: tuple[RoomStatus, ...]

@@ -9,10 +9,12 @@ import httpx
 import pytest
 
 from pytouchline_extended import (
+    ControllerStatus,
     RoomOperationMode,
     RoomStatus,
     TemperatureUnit,
     TouchlineController,
+    TouchlineErrorCode,
     TouchlineHTTPError,
     TouchlineResponseError,
     TouchlineState,
@@ -54,7 +56,27 @@ def _build_xml_response(values: dict[str, str | None], keys: list[str]) -> bytes
 
 
 def _sample_room_values(room_count: int) -> dict[str, str | None]:
-    data: dict[str, str | None] = {"totalNumberOfDevices": str(room_count)}
+    data: dict[str, str | None] = {
+        "totalNumberOfDevices": str(room_count),
+        "isMaster": "1",
+        "numberOfSlaveControllers": "0",
+        "R0.uniqueID": "0123456789ABCDEF01234567",
+        "R0.kurzID": "38",
+        "R0.numberOfPairedDevices": str(room_count),
+        "R0.ErrorCode": "0",
+        "R0.Safety": "0",
+        "R0.Taupunkt": "0",
+        "R0.WeekProgWarn": "0",
+        "R0.SystemStatus": "0",
+        "R0.DateTime": "1732000000",
+        "hw.HostName": "ROTH-000000",
+        "hw.Addr": "00-11-22-33-44-55",
+        "hw.IP": "192.168.1.50",
+        "STM-APP": "A.FA",
+        "STM-BL": "1.20",
+        "STELL-APP": "1.42",
+        "STELL-BL": "1.20",
+    }
     for idx in range(room_count):
         prefix = f"G{idx}."
         data.update(
@@ -117,7 +139,31 @@ async def test_fetch_async_chunks_under_1100_bytes(room_count: int):
         state = await controller.fetch_async()
 
     assert isinstance(state, TouchlineState)
+    assert state.controller == ControllerStatus(
+        unique_id="0123456789ABCDEF01234567",
+        controller_id=38,
+        paired_devices=room_count,
+        total_devices=room_count,
+        is_master=True,
+        slave_controllers=0,
+        hostname="ROTH-000000",
+        mac_address="00-11-22-33-44-55",
+        ip_address="192.168.1.50",
+        stm_app_version="A.FA",
+        stm_bootloader_version="1.20",
+        actuator_app_version="1.42",
+        actuator_bootloader_version="1.20",
+        error_code=TouchlineErrorCode.NO_ERROR,
+        safety_tripped=False,
+        dew_point_active=False,
+        week_program_warning=False,
+        system_status=0,
+        timestamp=1732000000,
+    )
     assert len(state.rooms) == room_count
+
+    with pytest.raises(FrozenInstanceError):
+        state.controller.hostname = "Mutated"  # type: ignore[misc]
 
     if room_count == 0:
         assert len(seen_payloads) == 1
@@ -194,7 +240,7 @@ async def test_fetch_and_writes_are_serialized_by_controller_lock():
 async def test_room_parsing_edge_cases_unknown_enums_step_and_latin1():
     def handler(request: httpx.Request) -> httpx.Response:
         keys = _extract_requested_keys(request.content)
-        if keys == ["totalNumberOfDevices"]:
+        if "totalNumberOfDevices" in keys:
             return httpx.Response(
                 200,
                 content=_build_xml_response({"totalNumberOfDevices": "2"}, keys),
@@ -278,7 +324,7 @@ async def test_fetch_async_missing_room_or_corrupt_int_raises():
     # Missing G0 parameters completely
     def missing_room_handler(request: httpx.Request) -> httpx.Response:
         keys = _extract_requested_keys(request.content)
-        if keys == ["totalNumberOfDevices"]:
+        if "totalNumberOfDevices" in keys:
             return httpx.Response(
                 200, content=_build_xml_response({"totalNumberOfDevices": "1"}, keys)
             )
@@ -297,7 +343,7 @@ async def test_fetch_async_missing_room_or_corrupt_int_raises():
     # Corrupt integer in G0.RaumTemp
     def corrupt_int_handler(request: httpx.Request) -> httpx.Response:
         keys = _extract_requested_keys(request.content)
-        if keys == ["totalNumberOfDevices"]:
+        if "totalNumberOfDevices" in keys:
             return httpx.Response(
                 200, content=_build_xml_response({"totalNumberOfDevices": "1"}, keys)
             )
@@ -311,6 +357,92 @@ async def test_fetch_async_missing_room_or_corrupt_int_raises():
     ) as client:
         controller = TouchlineController(url="http://192.168.1.50", client=client)
         with pytest.raises(TouchlineResponseError, match="Invalid integer value for G0.RaumTemp"):
+            await controller.fetch_async()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_error_code", "expected_error_code"),
+    [
+        ("0", TouchlineErrorCode.NO_ERROR),
+        ("1", TouchlineErrorCode.HIGH_LIMIT_DEW_POINT),
+        ("2", TouchlineErrorCode.HIGH_LIMIT_SUPPLY_WATER),
+        ("3", TouchlineErrorCode.RF_COMMUNICATION_INTERRUPTED),
+        ("42", 42),
+    ],
+)
+async def test_controller_status_alarms_empty_firmware_and_unknown_error_code(
+    raw_error_code: str,
+    expected_error_code: TouchlineErrorCode | int,
+):
+    values: dict[str, str | None] = {
+        "totalNumberOfDevices": "0",
+        "isMaster": "0",
+        "numberOfSlaveControllers": "2",
+        "R0.uniqueID": "ABCDEF0123456789ABCDEF01",
+        "R0.kurzID": "109",
+        "R0.numberOfPairedDevices": "4",
+        "R0.ErrorCode": raw_error_code,
+        "R0.Safety": "1",
+        "R0.Taupunkt": "1",
+        "R0.WeekProgWarn": "1",
+        "R0.SystemStatus": "7",
+        "R0.DateTime": "1732050000",
+        "hw.HostName": "",
+        "hw.Addr": "NA",
+        "STM-APP": "",
+        "STM-BL": "",
+        "STELL-APP": "NA",
+        "STELL-BL": None,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert len(request.content) < MAX_READ_BODY_BYTES
+        keys = _extract_requested_keys(request.content)
+        return httpx.Response(200, content=_build_xml_response(values, keys))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+        state = await controller.fetch_async()
+
+    ctrl = state.controller
+    assert ctrl.unique_id == "ABCDEF0123456789ABCDEF01"
+    assert ctrl.controller_id == 109
+    assert ctrl.paired_devices == 4
+    assert ctrl.total_devices == 0
+    assert ctrl.is_master is False
+    assert ctrl.slave_controllers == 2
+    assert ctrl.hostname is None
+    assert ctrl.mac_address is None
+    assert ctrl.ip_address is None
+    assert ctrl.stm_app_version is None
+    assert ctrl.stm_bootloader_version is None
+    assert ctrl.actuator_app_version is None
+    assert ctrl.actuator_bootloader_version is None
+    assert ctrl.error_code == expected_error_code
+    if raw_error_code == "42":
+        assert not isinstance(ctrl.error_code, TouchlineErrorCode)
+    else:
+        assert isinstance(ctrl.error_code, TouchlineErrorCode)
+    assert ctrl.safety_tripped is True
+    assert ctrl.dew_point_active is True
+    assert ctrl.week_program_warning is True
+    assert ctrl.system_status == 7
+    assert ctrl.timestamp == 1732050000
+
+
+@pytest.mark.asyncio
+async def test_controller_status_corrupt_error_code_raises():
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys = _extract_requested_keys(request.content)
+        values = {"totalNumberOfDevices": "0", "R0.ErrorCode": "bad_code"}
+        return httpx.Response(200, content=_build_xml_response(values, keys))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+        with pytest.raises(
+            TouchlineResponseError, match="Invalid integer value for R0.ErrorCode"
+        ):
             await controller.fetch_async()
 
 
