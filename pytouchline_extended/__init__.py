@@ -12,6 +12,7 @@ from httpx import AsyncClient
 
 from ._controller import TouchlineController
 from ._models import (
+    ControllerOperationMode,
     ControllerStatus,
     RoomOperationMode,
     RoomStatus,
@@ -44,6 +45,7 @@ from ._transport import (
 __author__ = "brondum"
 
 __all__ = [
+    "ControllerOperationMode",
     "ControllerStatus",
     "Parameter",
     "PyTouchline",
