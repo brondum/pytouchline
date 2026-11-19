@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 
+class ControllerOperationMode(IntEnum):
+    """Controller-wide operating mode applied via ``R0.OPModeRegler``."""
+
+    DAY = 0
+    NIGHT = 1
+    OFF_HOLIDAY = 2
+
+
 class RoomOperationMode(IntEnum):
     """Operating mode of an individual Touchline room thermostat (``G<n>.OPMode``)."""
 
@@ -56,6 +64,7 @@ class ControllerStatus:
     stm_bootloader_version: str | None
     actuator_app_version: str | None
     actuator_bootloader_version: str | None
+    operation_mode: ControllerOperationMode | int | None
     error_code: TouchlineErrorCode | int | None
     safety_tripped: bool | None
     dew_point_active: bool | None

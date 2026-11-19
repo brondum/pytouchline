@@ -132,7 +132,7 @@ GET /cgi-bin/writeVal.cgi?G0.SollTemp=2200 HTTP/1.1
 | `R0.uniqueID` | R | `str` (24 hex chars) | Controller hardware serial / unique ID (e.g. `0123456789ABCDEF01234567`). Case-sensitive `ID`. |
 | `R0.kurzID` | R | `int` (e.g. `10`, `20`) | Short RF controller ID (matches `G<n>.ownerKurzID`). |
 | `R0.numberOfPairedDevices` | R | `int` | Number of room units paired directly to `R0`. (`R1`/`R2` also expose `.kurzID`, `.uniqueID`, `.numberOfPairedDevices`.) |
-| `R0.OPModeRegler` | R/W | `int` enum (`0..2`) | Controller-wide operating mode applied across paired room units (`0` = Day, `1` = Night, `2` = Off / Holiday). Active weekly programs and subsequent local changes on a room unit take priority. |
+| `R0.OPModeRegler` | R/W | `int` enum (`0..2`) | Controller-wide operating mode applied across paired room units (`0` = Day, `1` = Night, `2` = Off / Holiday; `writeVal.cgi?R0.OPModeRegler=<0..2>` echoes the written integer). Active weekly programs and subsequent local changes on a room unit take priority. |
 | `R0.ErrorCode` | R | `int` enum (`0..3`) | Active controller alarm code observed in the web UI:<br>• `0`: No Error<br>• `1`: High Limit Dew Point<br>• `2`: High Limit Supply Water<br>• `3`: RF Communication Interrupted (e.g. lost RF link / depleted thermostat battery) |
 | `R0.Safety` | R | `int` (`0`/`1`) | Supply-water safety thermostat flag (`0` = normal). |
 | `R0.Taupunkt` | R | `int` (`0`/`1`) | Dew-point sensor flag in cooling setups (`0` = normal). |

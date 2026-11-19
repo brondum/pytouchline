@@ -21,6 +21,7 @@ import asyncio
 import httpx
 
 from pytouchline_extended import (
+    ControllerOperationMode,
     RoomOperationMode,
     TouchlineController,
     TouchlineErrorCode,
@@ -38,7 +39,7 @@ async def main() -> None:
         print(
             f"Controller {state.controller.hostname} "
             f"(serial={state.controller.unique_id}, mac={state.controller.mac_address}, "
-            f"error={state.controller.error_code})"
+            f"mode={state.controller.operation_mode}, error={state.controller.error_code})"
         )
         if state.controller.error_code == TouchlineErrorCode.RF_COMMUNICATION_INTERRUPTED:
             print("Warning: RF link interrupted — check room thermostat batteries!")
@@ -49,6 +50,9 @@ async def main() -> None:
                 f"{room.temperature}°C -> {room.target_temperature}°C "
                 f"(mode={room.operation_mode}, program={room.week_program})"
             )
+
+        # Switch all paired rooms on the controller at once (Day=0, Night=1, Off/Holiday=2)
+        await controller.set_controller_operation_mode_async(ControllerOperationMode.DAY)
 
         if state.rooms:
             await controller.set_room_target_temperature_async(0, 22.5)
@@ -62,6 +66,8 @@ async def main() -> None:
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+> **Controller-wide mode priority (`R0.OPModeRegler`):** Setting `ControllerOperationMode` (`DAY`, `NIGHT`, `OFF_HOLIDAY`) applies the selected mode across paired room thermostats on the controller, except that **active room weekly programs (`Pro 1`–`Pro 3`)** and **subsequent manual adjustments made locally on a physical room thermostat** take priority over the global setting.
 
 ### Legacy Per-Room API (`PyTouchline`)
 

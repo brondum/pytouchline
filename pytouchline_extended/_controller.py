@@ -10,6 +10,7 @@ from typing import TypeVar
 from httpx import AsyncClient
 
 from ._models import (
+    ControllerOperationMode,
     ControllerStatus,
     RoomOperationMode,
     RoomStatus,
@@ -38,6 +39,7 @@ CONTROLLER_PARAMETER_KEYS: tuple[str, ...] = (
     "R0.uniqueID",
     "R0.kurzID",
     "R0.numberOfPairedDevices",
+    "R0.OPModeRegler",
     "R0.ErrorCode",
     "R0.Safety",
     "R0.Taupunkt",
@@ -77,6 +79,20 @@ def _validate_room_index(room_index: int) -> int:
     if isinstance(room_index, bool) or room_index < 0:
         raise ValueError("room_index must be a non-negative integer")
     return int(room_index)
+
+
+def _validate_controller_mode(
+    mode: ControllerOperationMode | int,
+) -> ControllerOperationMode:
+    """Validate ``mode`` as a supported ``ControllerOperationMode`` (0..2)."""
+    if isinstance(mode, bool):
+        raise ValueError("mode must be a ControllerOperationMode or int in 0..2")
+    try:
+        return ControllerOperationMode(int(mode))
+    except (TypeError, ValueError) as err:
+        raise ValueError(
+            f"Unsupported controller operation mode {mode!r}; expected 0, 1, or 2"
+        ) from err
 
 
 def _parse_optional_str(items: Mapping[str, str | None], key: str) -> str | None:
@@ -164,6 +180,9 @@ def _parse_controller_status(items: Mapping[str, str | None]) -> ControllerStatu
         stm_bootloader_version=_parse_optional_str(items, "STM-BL"),
         actuator_app_version=_parse_optional_str(items, "STELL-APP"),
         actuator_bootloader_version=_parse_optional_str(items, "STELL-BL"),
+        operation_mode=_parse_optional_enum(
+            items, "R0.OPModeRegler", ControllerOperationMode
+        ),
         error_code=_parse_optional_enum(items, "R0.ErrorCode", TouchlineErrorCode),
         safety_tripped=_parse_optional_bool(items, "R0.Safety"),
         dew_point_active=_parse_optional_bool(items, "R0.Taupunkt"),
@@ -341,3 +360,20 @@ class TouchlineController:
                 error_label="name",
             )
         return matches_text_echo(response, str(name))
+
+    async def set_controller_operation_mode_async(
+        self, mode: ControllerOperationMode | int
+    ) -> bool:
+        """Set controller-wide operating mode (``R0.OPModeRegler``: Day=0, Night=1, Off/Holiday=2).
+
+        Active room weekly schedules (``Pro 1``–``Pro 3``) and subsequent local
+        adjustments made directly on a room thermostat override this global mode.
+        """
+        target = int(_validate_controller_mode(mode))
+        async with self._lock:
+            response = await self._transport.write_parameter_async(
+                "R0.OPModeRegler",
+                target,
+                error_label="R0.OPModeRegler",
+            )
+        return matches_numeric_echo(response, target)

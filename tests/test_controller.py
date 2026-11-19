@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from pytouchline_extended import (
+    ControllerOperationMode,
     ControllerStatus,
     RoomOperationMode,
     RoomStatus,
@@ -63,6 +64,7 @@ def _sample_room_values(room_count: int) -> dict[str, str | None]:
         "R0.uniqueID": "0123456789ABCDEF01234567",
         "R0.kurzID": "38",
         "R0.numberOfPairedDevices": str(room_count),
+        "R0.OPModeRegler": "0",
         "R0.ErrorCode": "0",
         "R0.Safety": "0",
         "R0.Taupunkt": "0",
@@ -153,6 +155,7 @@ async def test_fetch_async_chunks_under_1100_bytes(room_count: int):
         stm_bootloader_version="1.20",
         actuator_app_version="1.42",
         actuator_bootloader_version="1.20",
+        operation_mode=ControllerOperationMode.DAY,
         error_code=TouchlineErrorCode.NO_ERROR,
         safety_tripped=False,
         dew_point_active=False,
@@ -419,6 +422,7 @@ async def test_controller_status_alarms_empty_firmware_and_unknown_error_code(
     assert ctrl.stm_bootloader_version is None
     assert ctrl.actuator_app_version is None
     assert ctrl.actuator_bootloader_version is None
+    assert ctrl.operation_mode is None
     assert ctrl.error_code == expected_error_code
     if raw_error_code == "42":
         assert not isinstance(ctrl.error_code, TouchlineErrorCode)
@@ -514,3 +518,105 @@ async def test_room_write_mismatched_echo_and_http_error():
         with pytest.raises(TouchlineHTTPError) as exc_info:
             await controller.set_room_operation_mode_async(0, RoomOperationMode.NIGHT)
         assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_mode", "expected_mode"),
+    [
+        ("0", ControllerOperationMode.DAY),
+        ("1", ControllerOperationMode.NIGHT),
+        ("2", ControllerOperationMode.OFF_HOLIDAY),
+        ("9", 9),
+    ],
+)
+async def test_controller_operation_mode_reading(
+    raw_mode: str,
+    expected_mode: ControllerOperationMode | int,
+):
+    values: dict[str, str | None] = {
+        "totalNumberOfDevices": "0",
+        "R0.OPModeRegler": raw_mode,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys = _extract_requested_keys(request.content)
+        return httpx.Response(200, content=_build_xml_response(values, keys))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+        state = await controller.fetch_async()
+
+    assert state.controller.operation_mode == expected_mode
+    if raw_mode == "9":
+        assert not isinstance(
+            state.controller.operation_mode, ControllerOperationMode
+        )
+    else:
+        assert isinstance(state.controller.operation_mode, ControllerOperationMode)
+
+
+@pytest.mark.asyncio
+async def test_set_controller_operation_mode_write_echo_lock_and_validation():
+    values = _sample_room_values(3)
+    seen_urls: list[str] = []
+    in_flight = 0
+    max_in_flight = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.003)
+        try:
+            if "writeVal.cgi" in str(request.url):
+                seen_urls.append(str(request.url))
+                raw_val = request.url.raw_path.decode("ascii").split("=", 1)[1]
+                # Verified on live hardware: GET /cgi-bin/writeVal.cgi?R0.OPModeRegler=0 -> b'0'
+                return httpx.Response(200, content=raw_val.encode("ascii"))
+            keys = _extract_requested_keys(request.content)
+            return httpx.Response(200, content=_build_xml_response(values, keys))
+        finally:
+            in_flight -= 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+
+        state, ok_day, ok_night, ok_holiday = await asyncio.gather(
+            controller.fetch_async(),
+            controller.set_controller_operation_mode_async(
+                ControllerOperationMode.DAY
+            ),
+            controller.set_controller_operation_mode_async(1),
+            controller.set_controller_operation_mode_async(
+                ControllerOperationMode.OFF_HOLIDAY
+            ),
+        )
+
+        assert max_in_flight == 1
+        assert isinstance(state, TouchlineState)
+        assert (ok_day, ok_night, ok_holiday) == (True, True, True)
+
+        for invalid_mode in (-1, 3, 99, True, False):
+            with pytest.raises(ValueError):
+                await controller.set_controller_operation_mode_async(invalid_mode)
+
+    assert seen_urls == [
+        "http://192.168.1.50/cgi-bin/writeVal.cgi?R0.OPModeRegler=0",
+        "http://192.168.1.50/cgi-bin/writeVal.cgi?R0.OPModeRegler=1",
+        "http://192.168.1.50/cgi-bin/writeVal.cgi?R0.OPModeRegler=2",
+    ]
+
+    def mismatch_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"2")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(mismatch_handler)
+    ) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+        assert (
+            await controller.set_controller_operation_mode_async(
+                ControllerOperationMode.DAY
+            )
+            is False
+        )
