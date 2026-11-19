@@ -10,6 +10,14 @@ import xml.etree.ElementTree as ET
 import httpx
 from httpx import AsyncClient
 
+from ._controller import TouchlineController
+from ._models import (
+    RoomOperationMode,
+    RoomStatus,
+    TemperatureUnit,
+    TouchlineState,
+    WeekProgram,
+)
 from ._transport import (
     MISSING_VALUES,
     PARSE_ERRORS as _PARSE_ERRORS,
@@ -36,11 +44,17 @@ __author__ = "brondum"
 __all__ = [
     "Parameter",
     "PyTouchline",
+    "RoomOperationMode",
+    "RoomStatus",
+    "TemperatureUnit",
     "TouchlineConnectionError",
+    "TouchlineController",
     "TouchlineError",
     "TouchlineHTTPError",
     "TouchlineResponseError",
+    "TouchlineState",
     "TouchlineTimeoutError",
+    "WeekProgram",
 ]
 
 logger = logging.getLogger(__name__)

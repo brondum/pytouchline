@@ -20,6 +20,7 @@ READ_PATH = "/cgi-bin/ILRReadValues.cgi"
 WRITE_PATH = "/cgi-bin/writeVal.cgi"
 XML_HEADERS: dict[str, str] = {"Content-Type": "text/xml"}
 TEMP_SCALE = 100
+MAX_READ_BODY_BYTES = 1100
 
 PARSE_ERRORS = (AttributeError, IndexError, TypeError, ValueError)
 MISSING_VALUES = frozenset({None, "None", "NA", ""})
@@ -68,6 +69,70 @@ def build_read_request(items: Sequence[str]) -> str:
         f"<item_list>{joined_items}</item_list>"
         "</body>"
     )
+
+
+def _utf8_byte_length(text: str) -> int:
+    """Return the UTF-8 byte length of ``text``."""
+    return len(text.encode("utf-8"))
+
+
+def _item_fits_budget(item: str, max_bytes: int) -> bool:
+    """Return whether a single ``<i>`` element fits inside a ``< max_bytes`` request."""
+    return _utf8_byte_length(build_read_request([item])) < max_bytes
+
+
+def _split_group_into_items(keys: Sequence[str], max_bytes: int) -> list[str]:
+    """Split a parameter key group into ``<i>`` elements that each fit under ``max_bytes``."""
+    non_empty_keys = [key for key in keys if key]
+    if not non_empty_keys:
+        return []
+
+    full_item = build_xml_item(non_empty_keys)
+    if _item_fits_budget(full_item, max_bytes):
+        return [full_item]
+
+    items: list[str] = []
+    current_keys: list[str] = []
+    for key in non_empty_keys:
+        if not _item_fits_budget(build_xml_item([key]), max_bytes):
+            raise ValueError(
+                f"Parameter key {key!r} exceeds max request size ({max_bytes} bytes)"
+            )
+        if current_keys and not _item_fits_budget(
+            build_xml_item([*current_keys, key]), max_bytes
+        ):
+            items.append(build_xml_item(current_keys))
+            current_keys = [key]
+        else:
+            current_keys.append(key)
+
+    items.append(build_xml_item(current_keys))
+    return items
+
+
+def build_chunked_read_requests(
+    key_groups: Sequence[Sequence[str]],
+    *,
+    max_bytes: int = MAX_READ_BODY_BYTES,
+) -> list[str]:
+    """Pack parameter key groups into XML POST bodies strictly under ``max_bytes``."""
+    xml_items: list[str] = []
+    for group in key_groups:
+        xml_items.extend(_split_group_into_items(group, max_bytes))
+
+    requests: list[str] = []
+    current_batch: list[str] = []
+    for item in xml_items:
+        candidate = build_read_request([*current_batch, item])
+        if current_batch and _utf8_byte_length(candidate) >= max_bytes:
+            requests.append(build_read_request(current_batch))
+            current_batch = [item]
+        else:
+            current_batch.append(item)
+
+    if current_batch:
+        requests.append(build_read_request(current_batch))
+    return requests
 
 
 def decode_bytes(content: bytes) -> str:
@@ -244,6 +309,24 @@ class _TouchlineTransport:
         """POST ``<i>`` items and parse ``<n>``/``<v>`` pairs into a dictionary."""
         response = await self.request_xml_async(build_read_request(items))
         return parse_xml_items(response)
+
+    async def read_chunked_items_async(
+        self,
+        key_groups: Sequence[Sequence[str]],
+        *,
+        max_bytes: int = MAX_READ_BODY_BYTES,
+    ) -> dict[str, str | None]:
+        """Fetch ``key_groups`` across sequential ``< max_bytes`` POST requests."""
+        merged: dict[str, str | None] = {}
+        for payload in build_chunked_read_requests(key_groups, max_bytes=max_bytes):
+            response = await self.request_xml_async(payload)
+            try:
+                merged.update(parse_xml_items(response))
+            except PARSE_ERRORS as err:
+                raise TouchlineResponseError(
+                    "Invalid item list in Touchline XML response"
+                ) from err
+        return merged
 
     async def write_parameter_async(
         self,
