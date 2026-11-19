@@ -10,9 +10,11 @@ from typing import TypeVar
 from httpx import AsyncClient
 
 from ._models import (
+    ControllerStatus,
     RoomOperationMode,
     RoomStatus,
     TemperatureUnit,
+    TouchlineErrorCode,
     TouchlineState,
     WeekProgram,
 )
@@ -28,6 +30,28 @@ from ._transport import (
 )
 
 DEFAULT_TEMPERATURE_STEP = 0.5
+
+CONTROLLER_PARAMETER_KEYS: tuple[str, ...] = (
+    "totalNumberOfDevices",
+    "isMaster",
+    "numberOfSlaveControllers",
+    "R0.uniqueID",
+    "R0.kurzID",
+    "R0.numberOfPairedDevices",
+    "R0.ErrorCode",
+    "R0.Safety",
+    "R0.Taupunkt",
+    "R0.WeekProgWarn",
+    "R0.SystemStatus",
+    "R0.DateTime",
+    "hw.HostName",
+    "hw.Addr",
+    "hw.IP",
+    "STM-APP",
+    "STM-BL",
+    "STELL-APP",
+    "STELL-BL",
+)
 
 ROOM_PARAMETER_NAMES: tuple[str, ...] = (
     "name",
@@ -120,6 +144,35 @@ def _build_room_keys(room_index: int) -> list[str]:
     return [f"{prefix}{name}" for name in ROOM_PARAMETER_NAMES]
 
 
+def _parse_controller_status(items: Mapping[str, str | None]) -> ControllerStatus:
+    """Construct an immutable ``ControllerStatus`` from merged XML key/value items."""
+    total_devices = _parse_optional_int(items, "totalNumberOfDevices")
+    if total_devices is None or total_devices < 0:
+        raise TouchlineResponseError("Could not fetch totalNumberOfDevices")
+
+    return ControllerStatus(
+        unique_id=_parse_optional_str(items, "R0.uniqueID"),
+        controller_id=_parse_optional_int(items, "R0.kurzID"),
+        paired_devices=_parse_optional_int(items, "R0.numberOfPairedDevices"),
+        total_devices=total_devices,
+        is_master=_parse_optional_bool(items, "isMaster"),
+        slave_controllers=_parse_optional_int(items, "numberOfSlaveControllers"),
+        hostname=_parse_optional_str(items, "hw.HostName"),
+        mac_address=_parse_optional_str(items, "hw.Addr"),
+        ip_address=_parse_optional_str(items, "hw.IP"),
+        stm_app_version=_parse_optional_str(items, "STM-APP"),
+        stm_bootloader_version=_parse_optional_str(items, "STM-BL"),
+        actuator_app_version=_parse_optional_str(items, "STELL-APP"),
+        actuator_bootloader_version=_parse_optional_str(items, "STELL-BL"),
+        error_code=_parse_optional_enum(items, "R0.ErrorCode", TouchlineErrorCode),
+        safety_tripped=_parse_optional_bool(items, "R0.Safety"),
+        dew_point_active=_parse_optional_bool(items, "R0.Taupunkt"),
+        week_program_warning=_parse_optional_bool(items, "R0.WeekProgWarn"),
+        system_status=_parse_optional_int(items, "R0.SystemStatus"),
+        timestamp=_parse_optional_int(items, "R0.DateTime"),
+    )
+
+
 def _parse_room_status(
     items: Mapping[str, str | None], room_index: int
 ) -> RoomStatus:
@@ -188,33 +241,33 @@ class TouchlineController:
         """Return the per-request HTTP timeout in seconds."""
         return self._transport.timeout
 
-    async def _fetch_total_devices_unlocked(self) -> int:
-        """Fetch and validate ``totalNumberOfDevices`` while holding ``self._lock``."""
+    async def _fetch_controller_status_unlocked(self) -> ControllerStatus:
+        """Fetch and parse controller-level metadata while holding ``self._lock``."""
         items = await self._transport.read_chunked_items_async(
-            [["totalNumberOfDevices"]],
+            [CONTROLLER_PARAMETER_KEYS],
             max_bytes=MAX_READ_BODY_BYTES,
         )
-        total = _parse_optional_int(items, "totalNumberOfDevices")
-        if total is None or total < 0:
-            raise TouchlineResponseError("Could not fetch totalNumberOfDevices")
-        return total
+        return _parse_controller_status(items)
 
     async def fetch_async(self) -> TouchlineState:
-        """Fetch all paired rooms sequentially in ``< 1,100``-byte XML chunks."""
+        """Fetch controller metadata and all paired rooms in ``< 1,100``-byte XML chunks."""
         async with self._lock:
-            total_devices = await self._fetch_total_devices_unlocked()
-            if total_devices == 0:
-                return TouchlineState(rooms=())
+            controller = await self._fetch_controller_status_unlocked()
+            if controller.total_devices == 0:
+                return TouchlineState(controller=controller, rooms=())
 
-            room_groups = [_build_room_keys(idx) for idx in range(total_devices)]
+            room_groups = [
+                _build_room_keys(idx) for idx in range(controller.total_devices)
+            ]
             room_items = await self._transport.read_chunked_items_async(
                 room_groups,
                 max_bytes=MAX_READ_BODY_BYTES,
             )
             rooms = tuple(
-                _parse_room_status(room_items, idx) for idx in range(total_devices)
+                _parse_room_status(room_items, idx)
+                for idx in range(controller.total_devices)
             )
-            return TouchlineState(rooms=rooms)
+            return TouchlineState(controller=controller, rooms=rooms)
 
     async def _write_room_scaled_temp_async(
         self, room_index: int, parameter: str, temperature: float

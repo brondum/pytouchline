@@ -23,6 +23,7 @@ import httpx
 from pytouchline_extended import (
     RoomOperationMode,
     TouchlineController,
+    TouchlineErrorCode,
     WeekProgram,
 )
 
@@ -33,6 +34,14 @@ async def main() -> None:
     async with httpx.AsyncClient(verify=False) as client:
         controller = TouchlineController(url=url, timeout=10.0, client=client)
         state = await controller.fetch_async()
+
+        print(
+            f"Controller {state.controller.hostname} "
+            f"(serial={state.controller.unique_id}, mac={state.controller.mac_address}, "
+            f"error={state.controller.error_code})"
+        )
+        if state.controller.error_code == TouchlineErrorCode.RF_COMMUNICATION_INTERRUPTED:
+            print("Warning: RF link interrupted — check room thermostat batteries!")
 
         for room in state.rooms:
             print(
