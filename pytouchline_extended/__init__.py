@@ -1,403 +1,366 @@
+from __future__ import annotations
+
 import asyncio
-import logging
-import xml.etree.ElementTree as ET
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+import logging
 from typing import Any
+import xml.etree.ElementTree as ET
 
-import cchardet as chardet  # type: ignore[import-untyped]
 import httpx
-
-__author__ = 'brondum'
-
 from httpx import AsyncClient
 
+from ._transport import (
+    MISSING_VALUES,
+    PARSE_ERRORS as _PARSE_ERRORS,
+    READ_PATH,
+    TEMP_SCALE,
+    WRITE_PATH,
+    XML_HEADERS,
+    TouchlineConnectionError,
+    TouchlineError,
+    TouchlineHTTPError,
+    TouchlineResponseError,
+    TouchlineTimeoutError,
+    _TouchlineTransport,
+    build_read_request,
+    build_xml_item,
+    matches_numeric_echo,
+    matches_text_echo,
+    parse_xml_items,
+    scale_temperature,
+)
+
+__author__ = "brondum"
+
 __all__ = [
-	"Parameter",
-	"PyTouchline",
-	"TouchlineConnectionError",
-	"TouchlineError",
-	"TouchlineHTTPError",
-	"TouchlineResponseError",
-	"TouchlineTimeoutError",
+    "Parameter",
+    "PyTouchline",
+    "TouchlineConnectionError",
+    "TouchlineError",
+    "TouchlineHTTPError",
+    "TouchlineResponseError",
+    "TouchlineTimeoutError",
 ]
 
 logger = logging.getLogger(__name__)
 
-_PARSE_ERRORS = (AttributeError, IndexError, TypeError, ValueError)
-
-
-class TouchlineError(Exception):
-	"""Base exception for all pytouchline errors."""
-
-
-class TouchlineConnectionError(TouchlineError):
-	"""The Touchline controller could not be reached."""
-
-
-class TouchlineTimeoutError(TouchlineConnectionError):
-	"""The request to the Touchline controller timed out."""
-
-
-class TouchlineHTTPError(TouchlineError):
-	"""The Touchline controller responded with a non-success HTTP status."""
-
-	def __init__(self, message: str, status_code: int) -> None:
-		super().__init__(f"{message} (HTTP {status_code})")
-		self.status_code = status_code
-
-
-class TouchlineResponseError(TouchlineError):
-	"""The Touchline controller returned an empty or unparseable response."""
-
 
 class PyTouchline(object):
-	"""
-	A Python interface for controlling a Roth Touchline heat pump controller.
+    """
+    A Python interface for controlling a Roth Touchline heat pump controller.
 
-	Attributes:
-			id (int): The ID of the sensor.
-			url (str): The URL of the heat pump controller.
-			timeout (float): HTTP request timeout in seconds (default: 10.0).
-			client (httpx.AsyncClient | None): Optional shared client. It is not
-				closed by this class. When omitted, a new client is created per request.
-	"""
+    Attributes:
+            id (int): The ID of the sensor.
+            url (str): The URL of the heat pump controller.
+            timeout (float): HTTP request timeout in seconds (default: 10.0).
+            client (httpx.AsyncClient | None): Optional shared client. It is not
+                closed by this class. When omitted, a new client is created per request.
+    """
 
-	def __init__(
-		self,
-		id: int = 0,
-		url: str = "",
-		timeout: float = 10.0,
-		client: AsyncClient | None = None,
-	) -> None:
-		self._id = id
-		self._url = url
-		self._timeout = timeout
-		self._client = client
-		self._temp_scale = 100
-		self._header = {"Content-Type": "text/xml"}
-		self._read_path = "/cgi-bin/ILRReadValues.cgi"
-		self._write_path = "/cgi-bin/writeVal.cgi"
-		self._parameter: dict[str, str] = {}
-		self.devices: list[Any] = []
-		self._xml_element_list: list[Parameter] = []
-		self._xml_element_list.append(
-			Parameter(name="name", desc="Name", type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="upass", desc="Password", type=Parameter.CD))
-		self._xml_element_list.append(
-			Parameter(name="SollTempMaxVal", desc="Setpoint max",
-					  type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="SollTempMinVal", desc="Setpoint min",
-					  type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="WeekProg", desc="Week program", type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="OPMode", desc="Operation mode", type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="SollTemp", desc="Setpoint", type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="RaumTemp", desc="Temperature", type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="kurzID", desc="Device ID", type=Parameter.G))
-		self._xml_element_list.append(
-			Parameter(name="ownerKurzID", desc="Controller ID",
-					  type=Parameter.G))
+    def __init__(
+        self,
+        id: int = 0,
+        url: str = "",
+        timeout: float = 10.0,
+        client: AsyncClient | None = None,
+    ) -> None:
+        self._id = id
+        self._url = url
+        self._timeout = timeout
+        self._client = client
+        self._temp_scale = TEMP_SCALE
+        self._header = dict(XML_HEADERS)
+        self._read_path = READ_PATH
+        self._write_path = WRITE_PATH
+        self._transport = _TouchlineTransport(
+            url=url,
+            timeout=timeout,
+            client=client,
+            client_factory=lambda: self.get_async_client(),
+            read_path=self._read_path,
+            write_path=self._write_path,
+            headers=self._header,
+        )
+        self._parameter: dict[str, str] = {}
+        self.devices: list[Any] = []
+        self._xml_element_list: list[Parameter] = [
+            Parameter(name="name", desc="Name", type=Parameter.G),
+            Parameter(name="SollTempMaxVal", desc="Setpoint max", type=Parameter.G),
+            Parameter(name="SollTempMinVal", desc="Setpoint min", type=Parameter.G),
+            Parameter(name="WeekProg", desc="Week program", type=Parameter.G),
+            Parameter(name="OPMode", desc="Operation mode", type=Parameter.G),
+            Parameter(name="SollTemp", desc="Setpoint", type=Parameter.G),
+            Parameter(name="RaumTemp", desc="Temperature", type=Parameter.G),
+            Parameter(name="kurzID", desc="Device ID", type=Parameter.G),
+            Parameter(name="ownerKurzID", desc="Controller ID", type=Parameter.G),
+        ]
 
-	def get_async_client(self) -> AsyncClient:
-		return httpx.AsyncClient(verify=False, timeout=self._timeout)
+    def _sync_transport(self) -> _TouchlineTransport:
+        self._transport.url = self._url
+        self._transport.timeout = self._timeout
+        self._transport.client = self._client
+        self._transport.read_path = self._read_path
+        self._transport.write_path = self._write_path
+        self._transport.headers = self._header
+        return self._transport
 
-	@asynccontextmanager
-	async def _async_client(self) -> AsyncIterator[AsyncClient]:
-		if self._client is not None:
-			yield self._client
-			return
-		async with self.get_async_client() as client:
-			yield client
+    def get_async_client(self) -> AsyncClient:
+        return httpx.AsyncClient(verify=False, timeout=self._timeout)
 
-	async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-		try:
-			async with self._async_client() as client:
-				return await client.request(
-					method=method, url=url, timeout=self._timeout, **kwargs
-				)
-		except httpx.TimeoutException as e:
-			raise TouchlineTimeoutError(
-				f"Touchline controller timeout after {self._timeout} seconds at {self._url}: {e}") from e
-		except httpx.RequestError as e:
-			raise TouchlineConnectionError(f"Network error connecting to Touchline controller at {self._url}: {e}") from e
+    @asynccontextmanager
+    async def _async_client(self) -> AsyncIterator[AsyncClient]:
+        async with self._sync_transport().async_client() as client:
+            yield client
 
-	async def get_number_of_devices_async(self) -> int:
-		number_of_devices_items = []
-		number_of_devices_items.append("<i><n>totalNumberOfDevices</n></i>")
-		request = self._get_touchline_request(number_of_devices_items)
-		response = await self._request_and_receive_xml(request)
-		try:
-			raw_count = self._parse_number_of_devices(response)
-			if raw_count is None:
-				raise ValueError("Missing number of devices")
-			return int(raw_count)
-		except _PARSE_ERRORS as e:
-			raise TouchlineResponseError("Could not fetch the number of devices") from e
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        return await self._sync_transport().request_async(method, url, **kwargs)
 
-	def get_number_of_devices(self) -> int:
-		return asyncio.run(self.get_number_of_devices_async())
+    async def get_number_of_devices_async(self) -> int:
+        request = self._get_touchline_request([build_xml_item(["totalNumberOfDevices"])])
+        response = await self._request_and_receive_xml(request)
+        try:
+            raw_count = self._parse_number_of_devices(response, "totalNumberOfDevices")
+            if raw_count is None or raw_count in MISSING_VALUES:
+                raise ValueError("Missing number of devices")
+            return int(raw_count)
+        except _PARSE_ERRORS as e:
+            raise TouchlineResponseError("Could not fetch the number of devices") from e
 
-	async def get_hostname_async(self) -> str | None:
-		hostname_items = []
-		hostname_items.append("<i><n>hw.HostName</n></i>")
-		request = self._get_touchline_request(hostname_items)
-		response = await self._request_and_receive_xml(request)
-		try:
-			return self._parse_number_of_devices(response)
-		except _PARSE_ERRORS as e:
-			raise TouchlineResponseError("Could not fetch the hostname") from e
+    def get_number_of_devices(self) -> int:
+        return asyncio.run(self.get_number_of_devices_async())
 
-	def get_hostname(self) -> str | None:
-		return asyncio.run(self.get_hostname_async())
+    async def get_hostname_async(self) -> str | None:
+        request = self._get_touchline_request([build_xml_item(["hw.HostName"])])
+        response = await self._request_and_receive_xml(request)
+        try:
+            hostname = self._parse_number_of_devices(response, "hw.HostName")
+            return None if hostname in MISSING_VALUES else hostname
+        except _PARSE_ERRORS as e:
+            raise TouchlineResponseError("Could not fetch the hostname") from e
 
-	async def get_status_async(self) -> str | None:
-		status_items = []
-		status_items.append("<i><n>R0.SystemStatus</n></i>")
-		request = self._get_touchline_request(status_items)
-		response = await self._request_and_receive_xml(request)
-		try:
-			return self._parse_number_of_devices(response)
-		except _PARSE_ERRORS as e:
-			raise TouchlineResponseError("Could not fetch the system status") from e
+    def get_hostname(self) -> str | None:
+        return asyncio.run(self.get_hostname_async())
 
-	def get_status(self) -> str | None:
-		return asyncio.run(self.get_status_async())
+    async def get_status_async(self) -> str | None:
+        request = self._get_touchline_request([build_xml_item(["R0.SystemStatus"])])
+        response = await self._request_and_receive_xml(request)
+        try:
+            status = self._parse_number_of_devices(response, "R0.SystemStatus")
+            return None if status in MISSING_VALUES else status
+        except _PARSE_ERRORS as e:
+            raise TouchlineResponseError("Could not fetch the system status") from e
 
-	# update the roth touchline device, and parse desc, id etc.
-	async def update_async(self) -> None:
-		device_items = self._get_touchline_device_item(self._id)
-		request = self._get_touchline_request(device_items)
-		response = await self._request_and_receive_xml(request)
-		try:
-			return self._parse_device(response)
-		except _PARSE_ERRORS as e:
-			raise TouchlineResponseError(f"Could not parse device {self._id}") from e
+    def get_status(self) -> str | None:
+        return asyncio.run(self.get_status_async())
 
-	# update the roth touchline device, and parse desc, id etc.
-	def update(self) -> None:
-		return asyncio.run(self.update_async())
+    async def update_async(self) -> None:
+        device_items = self._get_touchline_device_item(self._id)
+        request = self._get_touchline_request(device_items)
+        response = await self._request_and_receive_xml(request)
+        try:
+            self._parse_device(response)
+        except _PARSE_ERRORS as e:
+            raise TouchlineResponseError(f"Could not parse device {self._id}") from e
 
-	def _parse_device(self, response: ET.Element) -> None:
-		self.devices = []
-		item_list = response.find('item_list')
-		if item_list is None:
-			raise ValueError("Missing item_list")
-		for item in item_list.iterfind("i"):
-			list_iterator = 0
-			device_list = list(item)
-			for parameter in self._xml_element_list:
-				if device_list[list_iterator].tag != "n":
-					list_iterator -= 1
-					self._parameter[parameter.get_desc()] = "NA"
-				else:
-					self._parameter[parameter.get_desc()] = str(
-						device_list[list_iterator + 1].text)
-					if list_iterator == 0:
-						tag_text = device_list[list_iterator].text
-						if tag_text is None:
-							raise ValueError("Missing device tag text")
-						unique_id = tag_text.split(".")[0].split("G")[1]
-						self._parameter["Unique ID"] = unique_id
-				list_iterator += 2
+    def update(self) -> None:
+        return asyncio.run(self.update_async())
 
-	def _get_touchline_request(self, items: list[str]) -> str:
-		request = "<body>"
-		request += "<version>1.0</version>"
-		request += "<client>IMaster6_02_00</client>"
-		request += "<client_ver>6.02.0006</client_ver>"
-		request += "<file_name>room</file_name>"
-		request += "<item_list_size>0</item_list_size>"
-		request += "<item_list>"
-		for item in items:
-			request += item
-		request += "</item_list>"
-		request += "</body>"
-		return request
+    @staticmethod
+    def _format_parameter_key(parameter: Parameter, device_id: int | str) -> str:
+        param_type = parameter.get_type()
+        if param_type == Parameter.G:
+            return f"G{device_id}.{parameter.get_name()}"
+        if param_type == Parameter.R:
+            return f"R0.{parameter.get_name()}"
+        return f"CD.{parameter.get_name()}"
 
-	async def write_parameter_async(self, parameter: str, value: str | int | float) -> bytes:
-		response = await self._request(
-			method="GET",
-			url=self._url +
-				self._write_path + "?" +
-				"G" + str(self._parameter["Unique ID"]) +
-				"." + str(parameter) + "=" + str(value),
-		)
+    def _resolve_device_unique_id(self, items: Mapping[str, str | None]) -> str:
+        expected_prefix = f"G{self._id}."
+        if any(key.startswith(expected_prefix) for key in items):
+            return str(self._id)
+        for key in items:
+            if key.startswith("G") and "." in key:
+                room_id = key.split(".", 1)[0][1:]
+                if room_id.isdigit():
+                    return room_id
+        raise ValueError(f"No parameters returned for device G{self._id}")
 
-		if not response.is_success:
-			raise TouchlineHTTPError(
-				f"Failed to write parameter {parameter}: Roth Touchline did not respond successfully",
-				response.status_code)
+    def _parse_device(self, response: ET.Element) -> None:
+        self.devices = []
+        items = parse_xml_items(response)
+        unique_id = self._resolve_device_unique_id(items)
+        self._parameter["Unique ID"] = unique_id
+        for parameter in self._xml_element_list:
+            xml_key = self._format_parameter_key(parameter, unique_id)
+            raw_value = items.get(xml_key)
+            self._parameter[parameter.get_desc()] = (
+                "NA" if raw_value in MISSING_VALUES else str(raw_value)
+            )
 
-		return response.content
+    def _get_touchline_request(self, items: list[str]) -> str:
+        return build_read_request(items)
 
-	def write_parameter(self, parameter: str, value: str | int | float) -> bytes:
-		return asyncio.run(self.write_parameter_async(parameter, value))
+    async def _write_raw_parameter_async(
+        self,
+        key: str,
+        value: str | int | float,
+        *,
+        error_label: str | None = None,
+    ) -> bytes:
+        return await self._sync_transport().write_parameter_async(
+            key, value, error_label=error_label
+        )
 
-	async def _request_and_receive_xml(self, req_key: str) -> ET.Element:
-		logger.debug("Requesting URL: %s%s (timeout: %.1fs)", self._url, self._read_path, self._timeout)
+    async def write_parameter_async(
+        self, parameter: str, value: str | int | float
+    ) -> bytes:
+        unique_id = self._parameter.get("Unique ID", str(self._id))
+        return await self._write_raw_parameter_async(
+            f"G{unique_id}.{parameter}",
+            value,
+            error_label=parameter,
+        )
 
-		response = await self._request(
-			method="POST",
-			url=self._url + self._read_path,
-			content=req_key,
-			headers=self._header,
-		)
+    def write_parameter(self, parameter: str, value: str | int | float) -> bytes:
+        return asyncio.run(self.write_parameter_async(parameter, value))
 
-		logger.debug("Response status: %s, content length: %d bytes",
-					 response.status_code, len(response.content) if response.content else 0)
+    async def _request_and_receive_xml(self, req_key: str) -> ET.Element:
+        return await self._sync_transport().request_xml_async(req_key)
 
-		if not response.is_success:
-			raise TouchlineHTTPError("Roth Touchline did not respond successfully", response.status_code)
+    def _parse_number_of_devices(
+        self, response: ET.Element, key: str | None = None
+    ) -> str | None:
+        items = parse_xml_items(response)
+        if key is not None:
+            if key not in items:
+                raise ValueError(f"Missing {key}")
+            return items[key]
+        if "totalNumberOfDevices" in items:
+            return items["totalNumberOfDevices"]
+        if items:
+            return next(iter(items.values()))
+        value = response.find("item_list/i/v")
+        if value is None:
+            raise ValueError("Missing value")
+        return value.text
 
-		content = response.content
-		if not content or len(content) == 0:
-			raise TouchlineResponseError("Touchline controller returned empty response")
+    def _get_touchline_device_item(self, id: int) -> list[str]:
+        keys = [
+            self._format_parameter_key(parameter, id)
+            for parameter in self._xml_element_list
+        ]
+        return [build_xml_item(keys)]
 
-		try:
-			enc: str | None = chardet.detect(content)['encoding']
-			return ET.XML(content, parser=ET.XMLParser(encoding=enc))
-		except ET.ParseError as e:
-			# The response is not included as it can contain the controller password
-			raise TouchlineResponseError(f"Invalid XML response from Touchline controller: {e}") from e
+    def _get_int_parameter(self, key: str) -> int | None:
+        value = self._parameter.get(key)
+        if value in MISSING_VALUES:
+            return None
+        assert value is not None
+        try:
+            return int(value)
+        except ValueError as e:
+            raise TouchlineResponseError(
+                f"Invalid integer value for {key} on device {self._id}"
+            ) from e
 
-	def _parse_number_of_devices(self, response: ET.Element) -> str | None:
-		item_list = response.find('item_list')
-		if item_list is None:
-			raise ValueError("Missing item_list")
-		item = item_list.find('i')
-		if item is None:
-			raise ValueError("Missing item")
-		value = item.find('v')
-		if value is None:
-			raise ValueError("Missing value")
-		return value.text
+    def _get_scaled_temperature(self, key: str) -> float | None:
+        raw = self._get_int_parameter(key)
+        return None if raw is None else raw / self._temp_scale
 
-	def _get_touchline_device_item(self, id: int) -> list[str]:
-		items = []
-		parameters = ""
-		for parameter in self._xml_element_list:
-			if parameter.get_type() == Parameter.G:
-				parameters += "<n>G%d.%s</n>" % (id, parameter.get_name())
-			else:
-				parameters += "<n>CD.%s</n>" % (parameter.get_name())
-		items.append("<i>" + parameters + "</i>")
-		return items
+    def get_name(self) -> str | None:
+        value = self._parameter.get("Name")
+        if value in MISSING_VALUES:
+            return None
+        return value
 
-	def _get_int_parameter(self, key: str) -> int | None:
-		value = self._parameter.get(key)
-		if value in (None, "None", "NA", ""):
-			return None
-		try:
-			return int(value)
-		except ValueError as e:
-			raise TouchlineResponseError(
-				f"Invalid integer value for {key} on device {self._id}"
-			) from e
+    async def set_name_async(self, value: str) -> bool:
+        response = await self.write_parameter_async("name", value)
+        return matches_text_echo(response, str(value))
 
-	def _get_scaled_temperature(self, key: str) -> float | None:
-		raw = self._get_int_parameter(key)
-		return None if raw is None else raw / self._temp_scale
+    def set_name(self, value: str) -> bool:
+        return asyncio.run(self.set_name_async(value))
 
-	def get_name(self) -> str | None:
-		value = self._parameter.get("Name")
-		if value in (None, "None", "NA"):
-			return None
-		return value
+    def get_current_temperature(self) -> float | None:
+        return self._get_scaled_temperature("Temperature")
 
-	async def set_name_async(self, value: str) -> bool:
-		return (await self.write_parameter_async("name",
-									value)).decode("utf-8") == str(value)
+    def get_target_temperature(self) -> float | None:
+        return self._get_scaled_temperature("Setpoint")
 
-	def set_name(self, value: str) -> bool:
-		return asyncio.run(self.set_name_async(value))
+    async def set_target_temperature_async(self, value: float) -> bool:
+        scaled = scale_temperature(value, self._temp_scale)
+        response = await self.write_parameter_async("SollTemp", scaled)
+        return matches_numeric_echo(response, scaled)
 
-	def get_current_temperature(self) -> float | None:
-		return self._get_scaled_temperature("Temperature")
+    def set_target_temperature(self, value: float) -> bool:
+        return asyncio.run(self.set_target_temperature_async(value))
 
-	def get_target_temperature(self) -> float | None:
-		return self._get_scaled_temperature("Setpoint")
+    def get_target_temperature_high(self) -> float | None:
+        return self._get_scaled_temperature("Setpoint max")
 
-	async def set_target_temperature_async(self, value: float) -> bool:
-		return (await self.write_parameter_async("SollTemp",
-									float(value) *
-									self._temp_scale)).decode("utf-8") == \
-			   str(float(value) * self._temp_scale)
+    async def set_target_temperature_high_async(self, value: float) -> bool:
+        scaled = scale_temperature(value, self._temp_scale)
+        response = await self.write_parameter_async("SollTempMaxVal", scaled)
+        return matches_numeric_echo(response, scaled)
 
-	def set_target_temperature(self, value: float) -> bool:
-		return asyncio.run(self.set_target_temperature_async(value))
+    def set_target_temperature_high(self, value: float) -> bool:
+        return asyncio.run(self.set_target_temperature_high_async(value))
 
-	def get_target_temperature_high(self) -> float | None:
-		return self._get_scaled_temperature("Setpoint max")
+    def get_target_temperature_low(self) -> float | None:
+        return self._get_scaled_temperature("Setpoint min")
 
-	async def set_target_temperature_high_async(self, value: float) -> bool:
-		return (await self.write_parameter_async("SollTempMaxVal",
-									float(value) *
-									self._temp_scale)).decode("utf-8") == \
-			   str(float(value) * self._temp_scale)
+    async def set_target_temperature_low_async(self, value: float) -> bool:
+        scaled = scale_temperature(value, self._temp_scale)
+        response = await self.write_parameter_async("SollTempMinVal", scaled)
+        return matches_numeric_echo(response, scaled)
 
-	def set_target_temperature_high(self, value: float) -> bool:
-		return asyncio.run(self.set_target_temperature_high_async(value))
+    def set_target_temperature_low(self, value: float) -> bool:
+        return asyncio.run(self.set_target_temperature_low_async(value))
 
-	def get_target_temperature_low(self) -> float | None:
-		return self._get_scaled_temperature("Setpoint min")
+    def get_week_program(self) -> int | None:
+        return self._get_int_parameter("Week program")
 
-	async def set_target_temperature_low_async(self, value: float) -> bool:
-		return (await self.write_parameter_async("SollTempMinVal",
-									float(value) *
-									self._temp_scale)).decode("utf-8") == \
-			   str(float(value) * self._temp_scale)
+    async def set_week_program_async(self, value: int) -> bool:
+        target = int(value)
+        response = await self.write_parameter_async("WeekProg", target)
+        return matches_numeric_echo(response, target)
 
-	def set_target_temperature_low(self, value: float) -> bool:
-		return asyncio.run(self.set_target_temperature_low_async(value))
+    def set_week_program(self, value: int) -> bool:
+        return asyncio.run(self.set_week_program_async(value))
 
-	def get_week_program(self) -> int | None:
-		return self._get_int_parameter("Week program")
+    def get_operation_mode(self) -> int | None:
+        return self._get_int_parameter("Operation mode")
 
-	async def set_week_program_async(self, value: int) -> bool:
-		return (await self.write_parameter_async("WeekProg",
-									value)).decode("utf-8") == str(value)
+    async def set_operation_mode_async(self, value: int) -> bool:
+        target = int(value)
+        response = await self.write_parameter_async("OPMode", target)
+        return matches_numeric_echo(response, target)
 
-	def set_week_program(self, value: int) -> bool:
-		return asyncio.run(self.set_week_program_async(value))
+    def set_operation_mode(self, value: int) -> bool:
+        return asyncio.run(self.set_operation_mode_async(value))
 
-	def get_operation_mode(self) -> int | None:
-		return self._get_int_parameter("Operation mode")
+    def get_device_id(self) -> int | None:
+        return self._get_int_parameter("Device ID")
 
-	async def set_operation_mode_async(self, value: int) -> bool:
-		return (await self.write_parameter_async("OPMode",
-									value)).decode("utf-8") == str(value)
+    def get_controller_id(self) -> int | None:
+        return self._get_int_parameter("Controller ID")
 
-	def set_operation_mode(self, value: int) -> bool:
-		return asyncio.run(self.set_operation_mode_async(value))
-
-	def get_device_id(self) -> int | None:
-		return self._get_int_parameter("Device ID")
-
-	def get_controller_id(self) -> int | None:
-		return self._get_int_parameter("Controller ID")
 
 class Parameter(object):
-	CD = 0
-	G = 1
-	R = 2
+    CD = 0
+    G = 1
+    R = 2
 
-	def __init__(self, name: str, desc: str, type: int) -> None:
-		self._name = name
-		self._desc = desc
-		self._type = type
+    def __init__(self, name: str, desc: str, type: int) -> None:
+        self._name = name
+        self._desc = desc
+        self._type = type
 
-	def get_name(self) -> str:
-		return self._name
+    def get_name(self) -> str:
+        return self._name
 
-	def get_desc(self) -> str:
-		return self._desc
+    def get_desc(self) -> str:
+        return self._desc
 
-	def get_type(self) -> int:
-		return self._type
+    def get_type(self) -> int:
+        return self._type

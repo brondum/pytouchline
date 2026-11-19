@@ -60,12 +60,18 @@ def test_get_touchline_device_item():
     items = touchline._get_touchline_device_item(5)
 
     assert len(items) == 1
-    assert "<i>" in items[0]
-    assert "</i>" in items[0]
+    assert items[0].startswith("<i>")
+    assert items[0].endswith("</i>")
     assert "<n>G5.name</n>" in items[0]
+    assert "<n>G5.SollTempMaxVal</n>" in items[0]
+    assert "<n>G5.SollTempMinVal</n>" in items[0]
+    assert "<n>G5.WeekProg</n>" in items[0]
+    assert "<n>G5.OPMode</n>" in items[0]
     assert "<n>G5.SollTemp</n>" in items[0]
     assert "<n>G5.RaumTemp</n>" in items[0]
-    assert "<n>CD.upass</n>" in items[0]
+    assert "<n>G5.kurzID</n>" in items[0]
+    assert "<n>G5.ownerKurzID</n>" in items[0]
+    assert "CD.upass" not in items[0]
 
 
 def test_parse_number_of_devices():
@@ -93,8 +99,6 @@ def test_parse_device():
                 <i>
                     <n>G0.name</n>
                     <v>Living Room</v>
-                    <n>CD.upass</n>
-                    <v>password</v>
                     <n>G0.SollTempMaxVal</n>
                     <v>3000</v>
                     <n>G0.SollTempMinVal</n>
@@ -296,8 +300,6 @@ async def test_update_async():
                 <i>
                     <n>G0.name</n>
                     <v>Bedroom</v>
-                    <n>CD.upass</n>
-                    <v>password</v>
                     <n>G0.SollTempMaxVal</n>
                     <v>3000</v>
                     <n>G0.SollTempMinVal</n>
@@ -567,8 +569,6 @@ def test_parse_device_empty_xml_values_return_none():
                 <i>
                     <n>G3.name</n>
                     <v>wineroom</v>
-                    <n>CD.upass</n>
-                    <v>password</v>
                     <n>G3.SollTempMaxVal</n>
                     <v/>
                     <n>G3.SollTempMinVal</n>
@@ -614,3 +614,138 @@ def test_invalid_integer_parameter_raises_response_error():
         touchline.get_week_program()
 
 
+def test_parse_device_key_based_omitted_reordered_and_orphan_values():
+    """Test key-based parsing when tags are reordered, omitted, or have orphan <v/> tags"""
+    touchline = PyTouchline(id=2, url="http://192.168.1.254")
+    xml_response = ET.fromstring("""
+        <body>
+            <item_list>
+                <i>
+                    <v></v>
+                    <n>G2.RaumTemp</n><v>2267</v>
+                    <v/>
+                    <n>R0.SystemStatus</n><v>0</v>
+                    <n>G2.SollTemp</n><v>2200</v>
+                    <n>G2.DanglingWithoutValue</n>
+                    <n>G2.WeekProg</n><v>NA</v>
+                </i>
+                <i>
+                    <n>G2.kurzID</n><v>7</v>
+                    <n>G2.ownerKurzID</n><v>38</v>
+                    <n>G2.name</n><v>Office</v>
+                </i>
+            </item_list>
+        </body>
+    """)
+
+    touchline._parse_device(xml_response)
+    assert touchline._parameter["Unique ID"] == "2"
+    assert touchline.get_name() == "Office"
+    assert touchline.get_current_temperature() == 22.67
+    assert touchline.get_target_temperature() == 22.0
+    assert touchline.get_device_id() == 7
+    assert touchline.get_controller_id() == 38
+    assert touchline.get_week_program() is None
+    assert touchline.get_operation_mode() is None
+    assert touchline.get_target_temperature_high() is None
+    assert touchline.get_target_temperature_low() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "xml_body",
+    [
+        "<body><item_list></item_list></body>",
+        "<body><item_list><i></i></item_list></body>",
+        "<body><item_list><i><v/><v></v></i></item_list></body>",
+    ],
+)
+async def test_update_async_missing_room_tags_raises_response_error(xml_body: str):
+    """Test that empty <item_list> or orphan-only <i> blocks raise TouchlineResponseError"""
+    touchline = PyTouchline(id=9, url="http://192.168.1.254")
+    mock_response = ET.fromstring(xml_body)
+
+    with patch.object(touchline, "_request_and_receive_xml", new_callable=AsyncMock) as mock_request:
+        mock_request.return_value = mock_response
+        with pytest.raises(TouchlineResponseError, match="Could not parse device 9"):
+            await touchline.update_async()
+
+
+@pytest.mark.asyncio
+async def test_request_and_receive_xml_decodes_latin1_room_name():
+    """Test that Windows-1252 / Latin-1 room names are decoded cleanly"""
+    raw_xml = (
+        "<body><item_list><i>"
+        "<n>G0.name</n><v>Børneværelse</v>"
+        "<n>G0.RaumTemp</n><v>2125</v>"
+        "</i></item_list></body>"
+    ).encode("cp1252")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "CD.upass" not in request.content.decode("utf-8")
+        return httpx.Response(200, content=raw_xml)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        touchline = PyTouchline(id=0, url="http://192.168.1.254", client=client)
+        await touchline.update_async()
+
+    assert touchline.get_name() == "Børneværelse"
+    assert touchline.get_current_temperature() == 21.25
+
+
+@pytest.mark.asyncio
+async def test_generic_parameter_writes_room_and_controller():
+    """Test generic parameter writes for both G<n>.* and R0.* paths and URL encoding"""
+    urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        query = request.url.raw_path.decode("ascii").split("?", 1)[1]
+        _, raw_val = query.split("=", 1)
+        from urllib.parse import unquote
+        return httpx.Response(200, content=unquote(raw_val).encode("utf-8"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        touchline = PyTouchline(id=2, url="http://192.168.1.254", client=client)
+
+        # Works before update_async() using self._id fallback
+        assert await touchline.set_name_async("Living Room") is True
+        # Controller-level full key write via shared transport helper
+        raw_controller = await touchline._write_raw_parameter_async("R0.OPModeRegler", 1)
+        assert raw_controller == b"1"
+
+    assert urls == [
+        "http://192.168.1.254/cgi-bin/writeVal.cgi?G2.name=Living%20Room",
+        "http://192.168.1.254/cgi-bin/writeVal.cgi?R0.OPModeRegler=1",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target_temp", "echo_body", "expected_query", "expected_ok"),
+    [
+        pytest.param(22.5, b"2250", "G0.SollTemp=2250", True, id="int_echo"),
+        pytest.param(22.5, b"2250.0\r\n", "G0.SollTemp=2250", True, id="float_newline_echo"),
+        pytest.param(19.9, b"1990", "G0.SollTemp=1990", True, id="float_rounding"),
+        pytest.param(22.5, b"2100", "G0.SollTemp=2250", False, id="mismatched_echo"),
+        pytest.param(22.5, b"", "G0.SollTemp=2250", False, id="empty_echo"),
+    ],
+)
+async def test_set_temperature_integer_scaling_and_numeric_echo(
+    target_temp: float,
+    echo_body: bytes,
+    expected_query: str,
+    expected_ok: bool,
+):
+    """Test integer hundredths scaling and numeric echo validation on writes"""
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, content=echo_body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        touchline = PyTouchline(id=0, url="http://192.168.1.254", client=client)
+        assert await touchline.set_target_temperature_async(target_temp) is expected_ok
+
+    assert seen_urls == [f"http://192.168.1.254/cgi-bin/writeVal.cgi?{expected_query}"]
