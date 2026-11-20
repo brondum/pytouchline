@@ -14,7 +14,7 @@ pip install pytouchline_extended
 
 ### `TouchlineController` (Recommended Async API)
 
-`TouchlineController` represents a single physical Roth Touchline controller. It serializes all reads and writes behind an internal `asyncio.Lock`, polls paired rooms in sequential `< 1,100`-byte XML chunks (preventing `Keil-EWEB/2.1` multi-segment POST hangs and socket-table exhaustion), and returns immutable `@dataclass` snapshots:
+`TouchlineController` represents a single physical Roth Touchline controller. It serializes all reads and writes behind an internal `asyncio.Lock`, polls controller metadata and paired rooms in compact sequential `< 500`-byte XML chunks (preventing `Keil-EWEB/2.1` 1 KiB CGI response truncation, multi-segment POST hangs, and socket-table exhaustion), and returns immutable `@dataclass` snapshots:
 
 ```python
 import asyncio

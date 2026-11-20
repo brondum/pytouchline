@@ -237,8 +237,9 @@ class TouchlineController:
     """Async-first client for polling and controlling one Roth Touchline controller.
 
     All HTTP reads and writes on a controller instance are serialized behind an
-    internal ``asyncio.Lock``, and bulk XML reads are split into sequential POST
-    payloads strictly below 1,100 bytes for ``Keil-EWEB/2.1`` compatibility.
+    internal ``asyncio.Lock``, and bulk XML reads are split into compact
+    sequential POST payloads (< 500 bytes, <= 10 keys per ``<i>``) for
+    ``Keil-EWEB/2.1`` request and 1 KiB CGI response-buffer compatibility.
     """
 
     def __init__(
