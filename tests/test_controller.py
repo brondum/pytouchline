@@ -661,3 +661,46 @@ async def test_truncated_xml_response_splits_and_recovers():
         controller = TouchlineController(url="http://192.168.1.50", client=client)
         with pytest.raises(TouchlineResponseError, match="Invalid XML response"):
             await controller.fetch_async()
+
+
+def _room_with(
+    temperature: float | None, target_temperature: float | None
+) -> RoomStatus:
+    return RoomStatus(
+        index=0,
+        device_id=None,
+        controller_id=None,
+        unique_id=None,
+        name=None,
+        temperature=temperature,
+        target_temperature=target_temperature,
+        min_temperature=None,
+        max_temperature=None,
+        temperature_step=None,
+        operation_mode=None,
+        operation_mode_enabled=None,
+        week_program=None,
+        week_program_enabled=None,
+        temperature_unit=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("temperature", "target_temperature", "expected"),
+    [
+        pytest.param(20.0, 21.0, True, id="below-setpoint-demands-heat"),
+        pytest.param(22.0, 21.0, False, id="above-setpoint-no-heat"),
+        pytest.param(21.0, 21.0, None, id="inside-deadband-indeterminate"),
+        pytest.param(20.85, 21.0, None, id="just-inside-deadband"),
+        pytest.param(20.8, 21.0, True, id="just-below-deadband"),
+        pytest.param(21.2, 21.0, False, id="just-above-deadband"),
+        pytest.param(None, 21.0, None, id="no-temperature"),
+        pytest.param(20.0, None, None, id="no-setpoint"),
+    ],
+)
+def test_room_heating(
+    temperature: float | None,
+    target_temperature: float | None,
+    expected: bool | None,
+) -> None:
+    assert _room_with(temperature, target_temperature).heating is expected
