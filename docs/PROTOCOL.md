@@ -12,10 +12,10 @@ The classic Touchline network interface runs on an embedded microcontroller serv
 
 Several transport constraints were observed during testing and are important for reliable polling (for example in Home Assistant):
 
-1. **POST Body Size Ceiling (~1,400 bytes / Single TCP Segment):**
-   - `POST /cgi-bin/ILRReadValues.cgi` does **not** reliably reassemble multi-segment HTTP POST bodies on tested hardware.
-   - Observed on a 7-room controller: a single `ILRReadValues.cgi` POST body of **1,788 bytes** (exceeding a standard ~1,460-byte TCP MSS payload) causes `Keil-EWEB/2.1` to hang and time out after 10 seconds with no response.
-   - Splitting the same query into **sequential POST chunks kept below 1,100 bytes** succeeds consistently in **~11–13 ms per request (~25–35 ms total)**.
+1. **1 KiB CGI Response Buffer & Single-Segment POST Ceiling:**
+   - Newer hardware/firmware revisions format HTTP response headers (~307 bytes) plus the `ILRReadValues.cgi` XML body into a fixed **`1,024`-byte (`1 KiB`) CGI response buffer**, truncating the XML response mid-tag around **717 bytes** (`unclosed token: line 1, column 715`) if too many keys are requested in one POST.
+   - Additionally, `POST /cgi-bin/ILRReadValues.cgi` does **not** reliably reassemble multi-segment HTTP POST bodies (`> ~1,400 bytes`), hanging for 10 seconds if a single request spans multiple TCP segments.
+   - Splitting queries into **sequential POST chunks kept below 500 bytes** (at most 10 controller keys or 1 room / 13 keys per POST, yielding ~450–565 byte XML responses) keeps both requests and responses safely inside `Keil-EWEB/2.1` buffers across firmware revisions (~13 ms per request).
 2. **Limited Concurrent Socket Capacity:**
    - Issuing concurrent HTTP requests against the same controller IP (for example polling multiple room entities in parallel) can exhaust the embedded TCP socket table and cause intermittent connection drops or 10-second timeouts.
    - Reads and writes targeting the same controller URL should be **serialized** (for example via a single per-controller `asyncio.Lock`).
@@ -57,7 +57,7 @@ Several transport constraints were observed during testing and are important for
 ```
 
 * `<item_list>` may contain one `<i>` element with multiple `<n>` tags or multiple `<i>` elements.
-* Keep the UTF-8 request body **below 1,100 bytes** per POST to stay safely within a single TCP payload.
+* Keep the UTF-8 request body **below 500 bytes** (<= 10–13 keys per POST) so the controller's rendered XML response stays well below the **717-byte (`1 KiB` total HTTP)** CGI buffer limit observed on newer firmware revisions.
 
 **Response:**
 ```xml

@@ -22,6 +22,7 @@ from pytouchline_extended import (
     WeekProgram,
 )
 from pytouchline_extended._transport import (
+    MAX_KEYS_PER_ITEM,
     MAX_READ_BODY_BYTES,
     build_chunked_read_requests,
 )
@@ -119,7 +120,7 @@ def test_build_chunked_read_requests_splits_oversized_group_and_rejects_huge_key
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("room_count", [0, 3, 7, 12])
-async def test_fetch_async_chunks_under_1100_bytes(room_count: int):
+async def test_fetch_async_chunks_within_request_and_response_budgets(room_count: int):
     values = _sample_room_values(room_count)
     seen_payloads: list[bytes] = []
 
@@ -129,8 +130,14 @@ async def test_fetch_async_chunks_under_1100_bytes(room_count: int):
         seen_payloads.append(request.content)
         assert len(request.content) < MAX_READ_BODY_BYTES
         assert b"CD.upass" not in request.content
+        root = ET.fromstring(request.content.decode("utf-8"))
+        for item_elem in root.findall("item_list/i"):
+            assert len(item_elem.findall("n")) <= MAX_KEYS_PER_ITEM
         keys = _extract_requested_keys(request.content)
-        return httpx.Response(200, content=_build_xml_response(values, keys))
+        xml_resp = _build_xml_response(values, keys)
+        # Every XML response must stay safely below the 717-byte (1 KiB total HTTP) buffer ceiling
+        assert len(xml_resp) < 717
+        return httpx.Response(200, content=xml_resp)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         controller = TouchlineController(
@@ -169,13 +176,12 @@ async def test_fetch_async_chunks_under_1100_bytes(room_count: int):
         state.controller.hostname = "Mutated"  # type: ignore[misc]
 
     if room_count == 0:
-        assert len(seen_payloads) == 1
+        assert len(seen_payloads) == 2
         assert state.rooms == ()
         return
 
-    # 3 rooms fit per <1,100-byte chunk (971 bytes), plus 1 initial count request
-    expected_room_chunks = (room_count + 2) // 3
-    assert len(seen_payloads) == 1 + expected_room_chunks
+    # 2 controller chunks (10 + 10 keys) + 1 POST per room under the <500-byte budget
+    assert len(seen_payloads) == 2 + room_count
 
     first = state.rooms[0]
     assert first == RoomStatus(
@@ -234,16 +240,16 @@ async def test_fetch_and_writes_are_serialized_by_controller_lock():
     assert isinstance(results[0], TouchlineState)
     assert results[1] is True
     assert isinstance(results[2], TouchlineState)
-    # Each 7-room fetch is 4 contiguous "read" requests; "write" must never split a 4-read block
+    # Each 7-room fetch is 9 contiguous "read" requests (2 controller + 7 room); "write" must never split a 9-read block
     write_idx = events.index("write")
-    assert write_idx in (0, 4, 8)
+    assert write_idx in (0, 9, 18)
 
 
 @pytest.mark.asyncio
 async def test_room_parsing_edge_cases_unknown_enums_step_and_latin1():
     def handler(request: httpx.Request) -> httpx.Response:
         keys = _extract_requested_keys(request.content)
-        if "totalNumberOfDevices" in keys:
+        if not any(key.startswith("G") for key in keys):
             return httpx.Response(
                 200,
                 content=_build_xml_response({"totalNumberOfDevices": "2"}, keys),
@@ -327,7 +333,7 @@ async def test_fetch_async_missing_room_or_corrupt_int_raises():
     # Missing G0 parameters completely
     def missing_room_handler(request: httpx.Request) -> httpx.Response:
         keys = _extract_requested_keys(request.content)
-        if "totalNumberOfDevices" in keys:
+        if not any(key.startswith("G") for key in keys):
             return httpx.Response(
                 200, content=_build_xml_response({"totalNumberOfDevices": "1"}, keys)
             )
@@ -346,7 +352,7 @@ async def test_fetch_async_missing_room_or_corrupt_int_raises():
     # Corrupt integer in G0.RaumTemp
     def corrupt_int_handler(request: httpx.Request) -> httpx.Response:
         keys = _extract_requested_keys(request.content)
-        if "totalNumberOfDevices" in keys:
+        if not any(key.startswith("G") for key in keys):
             return httpx.Response(
                 200, content=_build_xml_response({"totalNumberOfDevices": "1"}, keys)
             )
@@ -620,3 +626,38 @@ async def test_set_controller_operation_mode_write_echo_lock_and_validation():
             )
             is False
         )
+
+
+@pytest.mark.asyncio
+async def test_truncated_xml_response_splits_and_recovers():
+    values = _sample_room_values(2)
+    values["G0.name"] = "Very Long Room Name " * 25
+
+    def truncating_handler(request: httpx.Request) -> httpx.Response:
+        keys = _extract_requested_keys(request.content)
+        full_xml = _build_xml_response(values, keys)
+        # Simulate Keil-EWEB/2.1 1 KiB CGI TX buffer truncating XML body at 717 bytes
+        if len(full_xml) > 717:
+            return httpx.Response(200, content=full_xml[:715] + b"<v")
+        return httpx.Response(200, content=full_xml)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(truncating_handler)
+    ) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+        state = await controller.fetch_async()
+
+    assert state.rooms[0].name == "Very Long Room Name " * 25
+    assert state.rooms[0].temperature == 20.0
+    assert state.rooms[1].name == "Room 1"
+
+    # Single-key malformed XML must still raise TouchlineResponseError without infinite recursion
+    def always_broken_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"<body><item_list><i><n>broken")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(always_broken_handler)
+    ) as client:
+        controller = TouchlineController(url="http://192.168.1.50", client=client)
+        with pytest.raises(TouchlineResponseError, match="Invalid XML response"):
+            await controller.fetch_async()
