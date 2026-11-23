@@ -166,3 +166,26 @@ On tested classic Touchline hardware, the following telemetry was **not** expose
 * **No per-room battery percentage or RF signal strength (RSSI)** (lost RF contact surfaces controller-wide via `R0.ErrorCode == 3`).
 * **No floor temperature (`FloorTemp` / `BodenTemp`) or room humidity** parameters on standard room thermostats.
 * **No weekly schedule time-slot read/write** for `Pro 1`–`Pro 3` over CGI (time slots are configured locally on the physical thermostat; CGI only switches the active program index `0..3`).
+
+---
+
+## 6. UDP Discovery
+
+The official Roth Touchline app finds controllers on the local network with a UDP broadcast, and `discover_controllers()` uses the same protocol:
+
+* The client broadcasts the ASCII string `SEARCH R*\r\n` to **UDP port 5000**. (`SEARCH R.UID=<unique ID>\r\n` targets a single controller.)
+* Every controller answers with a **160-byte** binary packet, sent back to the **source port of the search**, so the client does not need to bind port 5000.
+
+| Bytes | Field | Example | Notes |
+|-------|-------|---------|-------|
+| 0–3 | Protocol version | `R100` | ASCII |
+| 4–5 | Length | `160` | Big-endian |
+| 6–7 | Device ID | `37` | Same as `R0.kurzID` and the rooms' `ownerKurzID` |
+| 8–9 | Vendor ID | `32` | Roth = `32`; the app ignores other vendors |
+| 12–31 | IPv4 address, gateway, netmask, primary DNS, secondary DNS | `192.168.1.14`, … | 4 bytes each |
+| 32–37 | MAC address | `5C-C2-13-00-81-49` | Same as `hw.Addr` |
+| 48–67 | Name | `ID10655-47951974` | ISO-8859-1, NUL padded; not the hostname |
+| 68–147 | Location | `http://192.168.1.14/` | ASCII, NUL padded; the controller's base URL |
+| 148–159 | Unique ID | `51FF6E064965525706340287` | 12 bytes, same as `R0.uniqueID` |
+
+Bytes 10–11 and 38–47 were zero on the tested controller.

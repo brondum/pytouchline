@@ -151,6 +151,19 @@ if __name__ == "__main__":
 	asyncio.run(main())
 ```
 
+### Discovering controllers
+
+`discover_controllers()` finds controllers on the local network with the same UDP broadcast the official Roth Touchline app uses (see [docs/PROTOCOL.md](./docs/PROTOCOL.md#6-udp-discovery)):
+
+```python
+from pytouchline_extended import discover_controllers
+
+for controller in await discover_controllers(timeout=3.0):
+	print(controller.controller_id, controller.url, controller.unique_id)
+```
+
+Each result is a `DiscoveredController` with the controller's short ID (`controller_id`, the same as `ControllerStatus.controller_id`), serial number (`unique_id`), base URL (`url`, ready to pass to `TouchlineController`), IP address and MAC address. On hosts with several network interfaces, pass the subnet's broadcast address, for example `broadcast_address="192.168.1.255"`.
+
 ### Sharing an HTTP client
 
 By default a new `httpx.AsyncClient` is created for every request. To reuse an
