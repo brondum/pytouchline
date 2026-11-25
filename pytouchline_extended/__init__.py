@@ -11,6 +11,7 @@ import httpx
 from httpx import AsyncClient
 
 from ._controller import TouchlineController
+from ._discovery import DiscoveredController, discover_controllers
 from ._models import (
     ControllerOperationMode,
     ControllerStatus,
@@ -47,6 +48,7 @@ __author__ = "brondum"
 __all__ = [
     "ControllerOperationMode",
     "ControllerStatus",
+    "DiscoveredController",
     "Parameter",
     "PyTouchline",
     "RoomOperationMode",
@@ -61,6 +63,7 @@ __all__ = [
     "TouchlineState",
     "TouchlineTimeoutError",
     "WeekProgram",
+    "discover_controllers",
 ]
 
 logger = logging.getLogger(__name__)
